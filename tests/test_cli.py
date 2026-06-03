@@ -9,8 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from osrgen.cli import build_parser, parse_axis_paths, parse_axis_scales, parse_float_list, parse_int_list
-from osrgen.cli import parse_optional_float_list
+from osrgen.cli import build_parser, parse_axis_scales, parse_float_list
 
 
 class CliTests(unittest.TestCase):
@@ -33,16 +32,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(parse_axis_scales({"l0": 1.25}), {"l0": 1.25})
         self.assertIsNone(parse_axis_scales(""))
 
-    def test_parse_int_list(self) -> None:
-        self.assertEqual(parse_int_list("0,100,250"), [0, 100, 250])
-
     def test_parse_float_lists(self) -> None:
         self.assertEqual(parse_float_list("0,1.5"), [0.0, 1.5])
-        self.assertEqual(parse_optional_float_list("2.5"), [2.5])
-        self.assertIsNone(parse_optional_float_list(""))
-
-    def test_parse_axis_paths(self) -> None:
-        self.assertEqual(parse_axis_paths("l0=a.json,r1=b.json"), {"l0": "a.json", "r1": "b.json"})
 
     def test_predict_all_parser_accepts_runtime_options(self) -> None:
         parser = build_parser()
@@ -64,6 +55,8 @@ class CliTests(unittest.TestCase):
                 "neutralize",
                 "--quality-threshold",
                 "60",
+                "--device",
+                "cuda:0",
             ]
         )
 
@@ -73,6 +66,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(str(args.postprocess_profile), "post.json")
         self.assertEqual(args.quality_gate, "neutralize")
         self.assertEqual(args.quality_threshold, 60.0)
+        self.assertEqual(args.device, "cuda:0")
 
     def test_validate_preset_parser(self) -> None:
         parser = build_parser()
@@ -84,11 +78,14 @@ class CliTests(unittest.TestCase):
                 "--preset",
                 "configs/presets/region_hybrid_experience_95.json",
                 "--skip-device-check",
+                "--device",
+                "cpu",
             ]
         )
 
         self.assertEqual(args.preset, Path("configs/presets/region_hybrid_experience_95.json"))
         self.assertTrue(args.skip_device_check)
+        self.assertEqual(args.device, "cpu")
 
     def test_batch_predict_parser(self) -> None:
         parser = build_parser()
@@ -103,6 +100,8 @@ class CliTests(unittest.TestCase):
                 "configs/presets/region_hybrid_experience_95.json",
                 "--quality-gate",
                 "warn",
+                "--device",
+                "auto",
                 "--recursive",
                 "--force",
             ]
@@ -110,6 +109,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(str(args.input_dir), "videos")
         self.assertEqual(args.quality_gate, "warn")
+        self.assertEqual(args.device, "auto")
         self.assertTrue(args.recursive)
         self.assertTrue(args.force)
 

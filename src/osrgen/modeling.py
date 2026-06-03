@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 import csv
-import json
-import math
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -14,9 +12,14 @@ from .features import MODEL_INPUT_COLUMNS, MotionFeature, load_features_csv, sav
 from .flow import extract_motion_features
 from .funscript import Funscript
 from .generator import estimate_fps, moving_average, ms_to_samples, positions_to_funscript
+from .profiles import load_axis_scale_profile_data, load_postprocess_profile, normalize_postprocess_detail
+from .profiles import optional_profile_float
 from .project import file_fingerprint, write_json
+from .quality import prediction_duration_seconds, prediction_quality_for_axis, quality_gate_detail
+from .quality import summarize_prediction_quality, summarize_quality_gates, validate_quality_gate
 from .regions import DEFAULT_REGIONS, DEFAULT_REGION_FEATURE_SIGNALS
 from .regions import extract_motion_features_with_region_features, select_regions
+from .tcn import create_model, require_torch, resolve_torch_device
 
 
 MODEL_FEATURE_COLUMNS = MODEL_INPUT_COLUMNS
@@ -48,6 +51,7 @@ class ModelPredictAllConfig:
     postprocess_profile: str | None = None
     quality_gate: str = "warn"
     quality_threshold: float = 50.0
+    device: str = "auto"
 
     def to_json(self) -> dict[str, object]:
         data = asdict(self)
@@ -62,6 +66,7 @@ def predict_all_models(config: ModelPredictAllConfig) -> list[Path]:
     for axis in selected_axes:
         validate_axis(axis)
     validate_quality_gate(config.quality_gate, config.quality_threshold)
+    device = resolve_torch_device(config.device)
 
     checkpoint_dir = Path(config.checkpoint_dir)
     checkpoints: list[dict[str, Any]] = []
@@ -71,7 +76,7 @@ def predict_all_models(config: ModelPredictAllConfig) -> list[Path]:
         if not path.exists():
             missing.append(axis)
             continue
-        checkpoint = load_checkpoint(path)
+        checkpoint = load_checkpoint(path, device=device)
         if str(checkpoint.get("axis", "")).lower() != axis:
             raise RuntimeError(f"Checkpoint {path} must target {axis}, got {checkpoint.get('axis')}.")
         checkpoints.append(checkpoint)
@@ -234,58 +239,9 @@ def load_or_extract_features(
     return features
 
 
-def require_torch():
-    try:
-        import torch  # type: ignore
-        from torch import nn  # type: ignore
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "PyTorch is required for model prediction. Run install.bat or use: uv sync --extra model"
-        ) from exc
-    return torch, nn
-
-
-def create_model(input_dim: int, channels: int, layers: int, kernel_size: int, dropout: float):
-    torch, nn = require_torch()
-
-    class ConvBlock(nn.Module):
-        def __init__(self, in_channels: int, out_channels: int, dilation: int) -> None:
-            super().__init__()
-            padding = dilation * (kernel_size - 1) // 2
-            self.conv = nn.Conv1d(
-                in_channels,
-                out_channels,
-                kernel_size=kernel_size,
-                padding=padding,
-                dilation=dilation,
-            )
-            self.act = nn.ReLU()
-            self.drop = nn.Dropout(dropout)
-            self.proj = nn.Conv1d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
-
-        def forward(self, x):  # type: ignore[no-untyped-def]
-            residual = x if self.proj is None else self.proj(x)
-            return self.drop(self.act(self.conv(x))) + residual
-
-    class TinyTCN(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            blocks = []
-            in_channels = input_dim
-            for index in range(layers):
-                blocks.append(ConvBlock(in_channels, channels, dilation=2**index))
-                in_channels = channels
-            self.net = nn.Sequential(*blocks)
-            self.head = nn.Conv1d(channels, 1, kernel_size=1)
-
-        def forward(self, x):  # type: ignore[no-untyped-def]
-            return torch.sigmoid(self.head(self.net(x))).squeeze(1)
-
-    return TinyTCN()
-
-
-def load_checkpoint(path: str | Path) -> dict[str, Any]:
+def load_checkpoint(path: str | Path, *, device: str | object = "auto") -> dict[str, Any]:
     torch, _ = require_torch()
+    torch_device = resolve_torch_device(device)
     try:
         checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     except TypeError:
@@ -299,8 +255,11 @@ def load_checkpoint(path: str | Path) -> dict[str, Any]:
         dropout=float(model_config["dropout"]),
     )
     model.load_state_dict(checkpoint["model_state"])
+    model.to(torch_device)
     model.eval()
     checkpoint["model"] = model
+    checkpoint["device"] = str(torch_device)
+    checkpoint["_torch_device"] = torch_device
     checkpoint["normalization"]["mean"] = np.asarray(checkpoint["normalization"]["mean"], dtype=np.float32)
     checkpoint["normalization"]["std"] = np.asarray(checkpoint["normalization"]["std"], dtype=np.float32)
     return checkpoint
@@ -317,8 +276,9 @@ def predict_positions(checkpoint: dict[str, Any], features: np.ndarray) -> np.nd
             f"({', '.join(checkpoint_feature_columns(checkpoint))}), got {features.shape[1]}."
         )
     x = normalize_features(features, mean, std)
+    device = checkpoint.get("_torch_device", "cpu")
     with torch.no_grad():
-        tensor = torch.as_tensor(x.T[None, :, :], dtype=torch.float32)
+        tensor = torch.as_tensor(x.T[None, :, :], dtype=torch.float32, device=device)
         pred = model(tensor).detach().cpu().numpy()[0]
     return np.clip(pred * 100.0, 0.0, 100.0)
 
@@ -386,46 +346,6 @@ def infer_region_request_from_feature_columns(feature_columns: Iterable[str]) ->
     )
 
 
-def load_axis_scale_profile_data(path: str | Path) -> tuple[dict[str, float], dict[str, dict[str, object]]]:
-    data = read_json_file(path)
-    raw = data.get("axis_scales", data.get("axes", {}))
-    if not isinstance(raw, dict):
-        raise RuntimeError(f"Axis scale profile has no axis mapping: {path}")
-    scales: dict[str, float] = {}
-    details: dict[str, dict[str, object]] = {}
-    for axis, value in raw.items():
-        axis_name = str(axis).lower()
-        validate_axis(axis_name)
-        if isinstance(value, dict):
-            scale = optional_profile_float(value.get("scale"))
-            detail = dict(value)
-        else:
-            scale = optional_profile_float(value)
-            detail = {"scale": scale}
-        if scale is None or scale < 0:
-            raise RuntimeError(f"Invalid axis scale for {axis_name}: {value}")
-        detail["scale"] = scale
-        detail.setdefault("source", str(path))
-        scales[axis_name] = scale
-        details[axis_name] = detail
-    return scales, details
-
-
-def load_postprocess_profile(path: str | Path) -> dict[str, dict[str, object]]:
-    data = read_json_file(path)
-    raw_axes = data.get("axes")
-    if not isinstance(raw_axes, dict):
-        raise RuntimeError(f"Postprocess profile has no axes mapping: {path}")
-    profile: dict[str, dict[str, object]] = {}
-    for axis, value in raw_axes.items():
-        axis_name = str(axis).lower()
-        validate_axis(axis_name)
-        if not isinstance(value, dict):
-            raise RuntimeError(f"Invalid postprocess profile entry for {axis_name}: {path}")
-        profile[axis_name] = normalize_postprocess_detail(value, source=str(path))
-    return profile
-
-
 def axis_postprocess_detail_for(config: ModelPredictAllConfig, axis: str) -> dict[str, object]:
     if config.axis_postprocess and axis in config.axis_postprocess:
         return normalize_postprocess_detail(config.axis_postprocess[axis], source=config.postprocess_profile)
@@ -438,33 +358,6 @@ def axis_postprocess_detail_for(config: ModelPredictAllConfig, axis: str) -> dic
         "source": "config",
         "reason": "global predict-all settings",
     }
-
-
-def normalize_postprocess_detail(value: dict[str, object], *, source: str | None) -> dict[str, object]:
-    smoothing_ms = optional_profile_int(value.get("smoothing_ms"))
-    min_interval_ms = optional_profile_int(value.get("min_interval_ms"))
-    min_delta = optional_profile_float(value.get("min_delta")) or 0.0
-    deadband = optional_profile_float(value.get("deadband")) or 0.0
-    max_actions_per_second = optional_profile_float(value.get("max_actions_per_second"))
-    if smoothing_ms is None or smoothing_ms < 0:
-        raise RuntimeError(f"Invalid smoothing_ms: {value.get('smoothing_ms')}")
-    if min_interval_ms is None or min_interval_ms <= 0:
-        raise RuntimeError(f"Invalid min_interval_ms: {value.get('min_interval_ms')}")
-    if min_delta < 0:
-        raise RuntimeError(f"Invalid min_delta: {value.get('min_delta')}")
-    if deadband < 0:
-        raise RuntimeError(f"Invalid deadband: {value.get('deadband')}")
-    if max_actions_per_second is not None and max_actions_per_second <= 0:
-        raise RuntimeError(f"Invalid max_actions_per_second: {value.get('max_actions_per_second')}")
-    detail = dict(value)
-    detail["smoothing_ms"] = smoothing_ms
-    detail["min_interval_ms"] = min_interval_ms
-    detail["min_delta"] = min_delta
-    detail["deadband"] = deadband
-    detail["max_actions_per_second"] = max_actions_per_second
-    if source:
-        detail.setdefault("source", source)
-    return detail
 
 
 def axis_scale_for(config: ModelPredictAllConfig, axis: str) -> float:
@@ -509,165 +402,12 @@ def position_stats(times: list[int], positions: np.ndarray) -> dict[str, float |
     }
 
 
-def prediction_quality_for_axis(
-    *,
-    axis: str,
-    action_count: int,
-    times: list[int],
-    prediction_stats: dict[str, float | int | None],
-    raw_prediction_stats: dict[str, float | int | None],
-    axis_scale_detail: dict[str, object],
-) -> dict[str, object]:
-    duration_s = prediction_duration_seconds(times)
-    actions_per_second = float(action_count / duration_s) if duration_s and duration_s > 0 else None
-    prediction_range = optional_float_value(prediction_stats.get("range"))
-    raw_range = optional_float_value(raw_prediction_stats.get("range"))
-    scale = optional_float_value(axis_scale_detail.get("scale"))
-    confidence = optional_float_value(axis_scale_detail.get("confidence"))
-
-    score = 100
-    tags: list[str] = []
-    if scale is not None and scale < 0.95:
-        tags.append("intentionally_scaled_down")
-        if scale < 0.50:
-            tags.append("weak_axis_scaled")
-            score -= 10
-    if confidence is not None:
-        if confidence < 0.20:
-            tags.append("low_axis_confidence")
-            score -= 25
-        elif confidence < 0.40:
-            tags.append("moderate_axis_confidence")
-            score -= 10
-    if prediction_range is not None:
-        if prediction_range < 5.0:
-            tags.append("near_flat_output")
-            score -= 15
-        elif prediction_range < 10.0:
-            tags.append("low_amplitude_output")
-            score -= 8
-    if raw_range is not None and prediction_range is not None and scale is not None:
-        if raw_range >= 15.0 and prediction_range < raw_range * 0.60:
-            tags.append("amplitude_limited_by_scale")
-    if actions_per_second is not None:
-        if actions_per_second > 5.0:
-            tags.append("very_high_action_density")
-            score -= 20
-        elif actions_per_second > 4.0:
-            tags.append("high_action_density")
-            score -= 10
-        if prediction_range is not None and actions_per_second > 3.0 and prediction_range < 8.0:
-            tags.append("many_small_actions")
-            score -= 20
-
-    score = max(0, min(100, score))
-    if score < 50:
-        status = "weak"
-    elif score < 70 or "many_small_actions" in tags:
-        status = "review"
-    else:
-        status = "ok"
-    return {
-        "axis": axis,
-        "status": status,
-        "score": score,
-        "tags": tags,
-        "actions_per_second": actions_per_second,
-        "duration_s": duration_s,
-        "range": prediction_range,
-        "raw_range": raw_range,
-        "axis_scale": scale,
-        "axis_confidence": confidence,
-    }
-
-
-def summarize_prediction_quality(generated: list[dict[str, object]]) -> dict[str, object]:
-    by_status: dict[str, int] = {}
-    tag_counts: dict[str, int] = {}
-    review_axes: list[str] = []
-    scores: list[float] = []
-    for item in generated:
-        quality = item.get("quality")
-        if not isinstance(quality, dict):
-            continue
-        status = str(quality.get("status", "unknown"))
-        axis = str(item.get("axis", ""))
-        by_status[status] = by_status.get(status, 0) + 1
-        if status != "ok" and axis:
-            review_axes.append(axis)
-        score = optional_float_value(quality.get("score"))
-        if score is not None:
-            scores.append(score)
-        tags = quality.get("tags", [])
-        if isinstance(tags, list):
-            for tag in tags:
-                tag_text = str(tag)
-                tag_counts[tag_text] = tag_counts.get(tag_text, 0) + 1
-    return {
-        "axis_count": len(generated),
-        "mean_score": float(np.mean(scores)) if scores else None,
-        "by_status": by_status,
-        "tag_counts": dict(sorted(tag_counts.items())),
-        "review_axes": review_axes,
-    }
-
-
-def validate_quality_gate(mode: str, threshold: float) -> None:
-    if mode not in {"warn", "neutralize", "omit"}:
-        raise RuntimeError(f"Unsupported quality gate mode: {mode}")
-    if not 0 <= float(threshold) <= 100:
-        raise RuntimeError(f"Quality threshold must be between 0 and 100: {threshold}")
-
-
-def quality_gate_detail(*, mode: str, threshold: float, quality: dict[str, object]) -> dict[str, object]:
-    validate_quality_gate(mode, threshold)
-    score = optional_float_value(quality.get("score"))
-    triggered = score is None or score < float(threshold)
-    action = mode if triggered else "keep"
-    return {
-        "mode": mode,
-        "threshold": float(threshold),
-        "triggered": triggered,
-        "action": action,
-        "quality_status": quality.get("status"),
-        "quality_score": score,
-    }
-
-
-def summarize_quality_gates(generated: list[dict[str, object]]) -> dict[str, object]:
-    by_action: dict[str, int] = {}
-    triggered_axes: list[str] = []
-    for item in generated:
-        detail = item.get("quality_gate")
-        if not isinstance(detail, dict):
-            continue
-        action = str(detail.get("action", "unknown"))
-        by_action[action] = by_action.get(action, 0) + 1
-        if detail.get("triggered"):
-            triggered_axes.append(str(item.get("axis", "")))
-    return {
-        "axis_count": len(generated),
-        "triggered_count": len(triggered_axes),
-        "triggered_axes": triggered_axes,
-        "by_action": by_action,
-    }
-
-
 def neutral_funscript(times: list[int]) -> Funscript:
     if not times:
         return Funscript.from_actions([])
     if times[0] == times[-1]:
         return Funscript.from_actions([(times[0], 50)])
     return Funscript.from_actions([(times[0], 50), (times[-1], 50)])
-
-
-def prediction_duration_seconds(times: list[int]) -> float | None:
-    if len(times) < 2:
-        return None
-    duration_ms = max(times) - min(times)
-    if duration_ms <= 0:
-        return None
-    return duration_ms / 1000.0
 
 
 def unsupported_online_feature_columns(columns: Iterable[str]) -> set[str]:
@@ -714,45 +454,6 @@ def write_prediction_csv(times: list[int], positions: np.ndarray, path: str | Pa
         writer.writeheader()
         for time_ms, pos in zip(times, positions):
             writer.writerow({"time_ms": time_ms, "pos": round(float(pos), 6)})
-
-
-def read_json_file(path: str | Path) -> dict[str, object]:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise RuntimeError(f"Expected JSON object: {path}")
-    return data
-
-
-def optional_profile_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-
-
-def optional_profile_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
-
-
-def optional_float_value(value: object) -> float | None:
-    return optional_profile_float(value)
 
 
 def validate_axis(axis: str) -> None:

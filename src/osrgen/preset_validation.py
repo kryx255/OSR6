@@ -7,8 +7,9 @@ from typing import Any, Callable
 
 from .axes import AXIS_ORDER, SUPPORTED_AXES
 from .modeling import checkpoint_feature_columns, load_axis_scale_profile_data, load_checkpoint
-from .modeling import load_postprocess_profile, require_torch
+from .modeling import load_postprocess_profile
 from .project import write_json
+from .tcn import torch_runtime_info
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class ModelPresetValidationConfig:
     preset: str
     output: str | None = None
     check_device: bool = True
+    device: str | None = None
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)
@@ -30,6 +32,7 @@ def validate_model_preset(config: ModelPresetValidationConfig) -> dict[str, obje
     runtime: dict[str, object] = {}
 
     axes = preset_axes(preset.get("axes", AXIS_ORDER), errors)
+    device = preset_device(config.device if config.device is not None else preset.get("device", "auto"), errors)
     checkpoint_dir = preset_path_value(preset, "checkpoint_dir", errors)
     checkpoints: dict[str, dict[str, Any]] = {}
 
@@ -47,6 +50,7 @@ def validate_model_preset(config: ModelPresetValidationConfig) -> dict[str, obje
                 path=checkpoint_dir / f"{axis}.pt",
                 kind=f"checkpoint:{axis}",
                 expected_axis=axis,
+                device=device,
             )
             if checkpoint is not None:
                 checkpoints[axis] = checkpoint
@@ -73,7 +77,7 @@ def validate_model_preset(config: ModelPresetValidationConfig) -> dict[str, obje
     )
 
     if config.check_device:
-        inspect_runtime(runtime, errors)
+        inspect_runtime(runtime, errors, device=device)
 
     report: dict[str, object] = {
         "config": config.to_json(),
@@ -130,6 +134,15 @@ def preset_path_value(preset: dict[str, object], key: str, errors: list[str]) ->
     return Path(value)
 
 
+def preset_device(value: object, errors: list[str]) -> str:
+    if value is None or value == "":
+        return "auto"
+    if not isinstance(value, str):
+        errors.append("Preset device must be a string.")
+        return "auto"
+    return value
+
+
 def inspect_checkpoint_resource(
     resources: list[dict[str, object]],
     errors: list[str],
@@ -137,13 +150,14 @@ def inspect_checkpoint_resource(
     path: Path,
     kind: str,
     expected_axis: str,
+    device: str,
 ) -> dict[str, Any] | None:
     if not path.is_file():
         add_resource(resources, kind, path, "error", "file does not exist")
         errors.append(f"Missing {kind}: {path}")
         return None
     try:
-        checkpoint = load_checkpoint(path)
+        checkpoint = load_checkpoint(path, device=device)
         axis = str(checkpoint.get("axis", "")).lower()
         columns = checkpoint_feature_columns(checkpoint)
         input_dim = int(checkpoint["model_config"]["input_dim"])
@@ -193,16 +207,10 @@ def inspect_optional_json_profile(
         errors.append(f"Invalid {kind}: {path}: {exc}")
 
 
-def inspect_runtime(runtime: dict[str, object], errors: list[str]) -> None:
+def inspect_runtime(runtime: dict[str, object], errors: list[str], *, device: str) -> None:
     try:
-        torch, _ = require_torch()
-        runtime["torch_version"] = str(torch.__version__)
-        runtime["cuda_available"] = bool(torch.cuda.is_available())
-        runtime["cuda_device_count"] = int(torch.cuda.device_count())
-        if torch.cuda.is_available():
-            runtime["cuda_devices"] = [
-                str(torch.cuda.get_device_name(index)) for index in range(torch.cuda.device_count())
-            ]
+        runtime.update(torch_runtime_info(device))
+        runtime["device_note"] = "OpenCV feature extraction runs on CPU; TCN model inference uses execution_device."
     except Exception as exc:
         errors.append(f"Runtime device check failed: {exc}")
 

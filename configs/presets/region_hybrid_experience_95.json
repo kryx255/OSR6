@@ -6,6 +6,7 @@
   "analysis_fps": 8.0,
   "max_width": 360,
   "scene_threshold": 35.0,
+  "device": "auto",
   "roi": [0.15, 0.15, 0.7, 0.7],
   "postprocess_profile": "configs/postprocess/region_all_quality_95.json",
   "axis_scales": {

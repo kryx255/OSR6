@@ -73,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--preset", type=Path, default=DEFAULT_PRESET)
     validate.add_argument("--output", type=Path, default=None)
     validate.add_argument("--skip-device-check", action="store_true")
+    validate.add_argument("--device", default=None, help="Validation inference device: auto, cpu, cuda, or cuda:0.")
     validate.set_defaults(func=cmd_model_validate_preset)
 
     return parser
@@ -96,6 +97,7 @@ def add_predict_runtime_overrides(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--postprocess-profile", type=Path, default=None)
     parser.add_argument("--quality-gate", choices=["warn", "neutralize", "omit"], default=None)
     parser.add_argument("--quality-threshold", type=float, default=None)
+    parser.add_argument("--device", default=None, help="Inference device: auto, cpu, cuda, or cuda:0.")
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -143,6 +145,7 @@ def cmd_model_validate_preset(args: argparse.Namespace) -> int:
             preset=str(args.preset),
             output=str(args.output) if args.output else None,
             check_device=not bool(args.skip_device_check),
+            device=str(args.device) if args.device else None,
         )
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
@@ -164,6 +167,7 @@ def build_predict_all_config(
     roi = parse_float_list(preset_value(args, preset, "roi", [0.15, 0.15, 0.70, 0.70]), expected=4)
     quality_gate = str(preset_value(args, preset, "quality_gate", "warn"))
     quality_threshold = float(preset_value(args, preset, "quality_threshold", 50.0))
+    device = str(preset_value(args, preset, "device", "auto"))
     postprocess_profile = preset_path(args, preset, "postprocess_profile", None)
     axis_scale_profile = preset_path(args, preset, "axis_scale_profile", None)
 
@@ -199,6 +203,7 @@ def build_predict_all_config(
         postprocess_profile=str(postprocess_profile) if postprocess_profile else None,
         quality_gate=quality_gate,
         quality_threshold=quality_threshold,
+        device=device,
     )
 
 
@@ -264,18 +269,6 @@ def parse_float_list(value: object, *, expected: int | None = None) -> list[floa
     return floats
 
 
-def parse_int_list(value: str | list[int] | tuple[int, ...]) -> list[int]:
-    if isinstance(value, str):
-        return [int(item.strip()) for item in value.split(",") if item.strip()]
-    return [int(item) for item in value]
-
-
-def parse_optional_float_list(value: str | None) -> list[float] | None:
-    if value is None or value == "":
-        return None
-    return parse_float_list(value)
-
-
 def parse_axis_scales(value: str | dict[str, object] | None) -> dict[str, float] | None:
     if value is None or value == "":
         return None
@@ -317,22 +310,6 @@ def manual_axis_scale_details(
             "reason": "configured by preset or CLI",
         }
     return details
-
-
-def parse_axis_paths(value: str) -> dict[str, str]:
-    if not value:
-        return {}
-    pairs = [part.strip() for part in value.split(",") if part.strip()]
-    result: dict[str, str] = {}
-    for pair in pairs:
-        if "=" not in pair:
-            raise RuntimeError(f"Axis path must use axis=path syntax: {pair}")
-        axis, path = pair.split("=", 1)
-        axis_name = axis.strip().lower()
-        if axis_name not in SUPPORTED_AXES:
-            raise RuntimeError(f"Unsupported axis in path list: {axis_name}")
-        result[axis_name] = path.strip()
-    return result
 
 
 def optional_float(value: object) -> float | None:

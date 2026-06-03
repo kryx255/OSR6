@@ -6,6 +6,37 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
+BASE_MOTION_STAT_COLUMNS = (
+    "mean_dx",
+    "mean_dy",
+    "mean_mag",
+    "radial",
+    "std_dx",
+    "std_dy",
+    "std_mag",
+    "p90_mag",
+    "mean_abs_dx",
+    "mean_abs_dy",
+    "vertical_ratio",
+    "horizontal_ratio",
+    "center_mag",
+    "edge_mag",
+    "center_edge_mag_delta",
+    "divergence",
+    "curl",
+    "direction_x",
+    "direction_y",
+    "active_ratio",
+    "active_center_x",
+    "active_center_y",
+    "active_spread_x",
+    "active_spread_y",
+    "active_mean_dx",
+    "active_mean_dy",
+    "active_mean_mag",
+)
+
+
 @dataclass(frozen=True)
 class MotionFeature:
     time_ms: int
@@ -41,6 +72,7 @@ class MotionFeature:
     active_mean_dx: float = 0.0
     active_mean_dy: float = 0.0
     active_mean_mag: float = 0.0
+    # Compatibility-only CSV fields. Raw-video inference does not extract pose/track signals.
     track_detected: int = 0
     track_confidence: float = 0.0
     track_x: float = 0.0
@@ -99,9 +131,35 @@ def motion_feature_fields():
 
 
 FEATURE_COLUMNS = [field_info.name for field_info in motion_feature_fields()]
-MODEL_INPUT_COLUMNS = [column for column in FEATURE_COLUMNS if column != "time_ms"]
-TRACK_FEATURE_COLUMNS = [column for column in FEATURE_COLUMNS if column.startswith("track_")]
-POSE_FEATURE_COLUMNS = [column for column in FEATURE_COLUMNS if column.startswith("pose_")]
+MODEL_INPUT_COLUMNS = [
+    column
+    for column in FEATURE_COLUMNS
+    if column != "time_ms" and not column.startswith(("track_", "pose_"))
+]
+
+
+def motion_feature_from_stats(
+    time_ms: int,
+    roi_px: tuple[int, int, int, int],
+    frame_size: tuple[int, int],
+    stats: dict[str, float] | None = None,
+    *,
+    scene_cut: int = 0,
+) -> MotionFeature:
+    x, y, w, h = roi_px
+    width, height = frame_size
+    values = {column: 0.0 for column in BASE_MOTION_STAT_COLUMNS}
+    if stats:
+        values.update({column: float(stats.get(column, 0.0)) for column in BASE_MOTION_STAT_COLUMNS})
+    return MotionFeature(
+        time_ms=time_ms,
+        scene_cut=scene_cut,
+        roi_x=x / max(1, width),
+        roi_y=y / max(1, height),
+        roi_w=w / max(1, width),
+        roi_h=h / max(1, height),
+        **values,
+    )
 
 
 def save_features_csv(features: Iterable[MotionFeature], path: str | Path) -> None:

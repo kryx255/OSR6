@@ -29,6 +29,7 @@ uv sync --extra model
 - Add one or many videos.
 - Add a folder of videos, optionally recursive.
 - Write scripts next to each video, or create a same-name output folder next to each video.
+- Choose inference device: `auto`, `cpu`, `cuda`, or a specific device such as `cuda:0`.
 - The queue is cleared after a fully successful run, so repeated clicks do not regenerate previous videos.
 - The GUI supports Simplified Chinese, English, and Japanese.
 
@@ -38,6 +39,12 @@ Single video:
 
 ```powershell
 .\run_osrgen.bat model predict-all .\videos\sample.mp4 --preset .\configs\presets\region_hybrid_experience_95.json --output .\outputs
+```
+
+Use a specific inference device:
+
+```powershell
+.\run_osrgen.bat model predict-all .\videos\sample.mp4 --device cuda:0
 ```
 
 Batch:
@@ -88,6 +95,7 @@ uv sync --extra model
 - `添加视频`：选择一个或多个视频。
 - `添加文件夹`：批量加入文件夹里的视频，可勾选递归。
 - 输出方式可以选择直接生成在视频同目录，或在视频同目录创建同名文件夹。
+- 可选择推理设备：`auto`、`cpu`、`cuda`，或指定 `cuda:0`。
 - 生成成功后，当前待生成列表会自动清空，避免重复生成同一批视频。
 - GUI 支持中文、English、日本語，可在右上角切换。
 
@@ -97,6 +105,12 @@ uv sync --extra model
 
 ```powershell
 .\run_osrgen.bat model predict-all .\videos\sample.mp4 --preset .\configs\presets\region_hybrid_experience_95.json --output .\outputs
+```
+
+指定推理设备：
+
+```powershell
+.\run_osrgen.bat model predict-all .\videos\sample.mp4 --device cuda:0
 ```
 
 批量生成：
@@ -147,6 +161,7 @@ uv sync --extra model
 - 1つまたは複数の動画を追加できます。
 - フォルダー内の動画を一括追加できます。
 - スクリプトを動画と同じフォルダーに出力するか、動画と同名のフォルダーを作って出力できます。
+- 推論デバイスを選択できます: `auto`、`cpu`、`cuda`、または `cuda:0`。
 - 生成がすべて成功するとキューを自動でクリアします。
 - GUI は簡体字中国語、英語、日本語に対応しています。
 
@@ -156,6 +171,12 @@ uv sync --extra model
 
 ```powershell
 .\run_osrgen.bat model predict-all .\videos\sample.mp4 --preset .\configs\presets\region_hybrid_experience_95.json --output .\outputs
+```
+
+推論デバイス指定：
+
+```powershell
+.\run_osrgen.bat model predict-all .\videos\sample.mp4 --device cuda:0
 ```
 
 一括生成：

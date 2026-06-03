@@ -20,6 +20,7 @@ DEFAULT_PRESET = Path("configs/presets/region_hybrid_experience_95.json")
 OUTPUT_SAME_DIR = "same_dir"
 OUTPUT_SAME_NAME_FOLDER = "same_name_folder"
 LOG_POLL_MS = 100
+DEFAULT_DEVICE = "auto"
 
 
 LANGUAGE_NAMES = {
@@ -41,6 +42,7 @@ LANGUAGE_PACKS = {
         "output_same_dir": "脚本直接生成在视频同目录",
         "output_same_name_folder": "在视频同目录创建同名文件夹",
         "preset": "模型 preset",
+        "device": "推理设备",
         "browse": "浏览",
         "video": "视频",
         "output": "输出位置",
@@ -61,6 +63,7 @@ LANGUAGE_PACKS = {
         "status_stopped": "已停止，完成 {success} / {total}。",
         "status_done": "完成 {success} / {total}。",
         "log_preset": "使用 preset: {preset}",
+        "log_device": "推理设备: {device}",
         "log_output_mode": "输出模式: {mode}",
         "log_start": "[{index}/{total}] 开始: {video}",
         "log_done": "[{index}/{total}] 完成: {count} 个脚本 -> {output} ({elapsed:.1f}s)",
@@ -79,6 +82,7 @@ LANGUAGE_PACKS = {
         "output_same_dir": "Write scripts next to video",
         "output_same_name_folder": "Create a same-name folder next to video",
         "preset": "Model preset",
+        "device": "Inference device",
         "browse": "Browse",
         "video": "Video",
         "output": "Output",
@@ -99,6 +103,7 @@ LANGUAGE_PACKS = {
         "status_stopped": "Stopped, completed {success} / {total}.",
         "status_done": "Completed {success} / {total}.",
         "log_preset": "Preset: {preset}",
+        "log_device": "Device: {device}",
         "log_output_mode": "Output mode: {mode}",
         "log_start": "[{index}/{total}] Start: {video}",
         "log_done": "[{index}/{total}] Done: {count} scripts -> {output} ({elapsed:.1f}s)",
@@ -117,6 +122,7 @@ LANGUAGE_PACKS = {
         "output_same_dir": "動画と同じフォルダーに出力",
         "output_same_name_folder": "動画と同名のフォルダーを作成",
         "preset": "モデル preset",
+        "device": "推論デバイス",
         "browse": "参照",
         "video": "動画",
         "output": "出力先",
@@ -137,6 +143,7 @@ LANGUAGE_PACKS = {
         "status_stopped": "停止しました。完了 {success} / {total}。",
         "status_done": "完了 {success} / {total}。",
         "log_preset": "Preset: {preset}",
+        "log_device": "デバイス: {device}",
         "log_output_mode": "出力モード: {mode}",
         "log_start": "[{index}/{total}] 開始: {video}",
         "log_done": "[{index}/{total}] 完了: {count} scripts -> {output} ({elapsed:.1f}s)",
@@ -226,7 +233,20 @@ def python_executable() -> str:
     return os.environ.get("OSRGEN_PYTHON_EXE") or sys.executable
 
 
-def build_predict_command(video: Path, *, output_root: Path, preset: Path) -> list[str]:
+def available_device_options() -> tuple[str, ...]:
+    options = [DEFAULT_DEVICE, "cpu", "cuda"]
+    try:
+        from .tcn import require_torch
+
+        torch, _ = require_torch()
+        if torch.cuda.is_available():
+            options.extend(f"cuda:{index}" for index in range(torch.cuda.device_count()))
+    except Exception:
+        pass
+    return tuple(dict.fromkeys(options))
+
+
+def build_predict_command(video: Path, *, output_root: Path, preset: Path, device: str = DEFAULT_DEVICE) -> list[str]:
     return [
         python_executable(),
         "-m",
@@ -238,6 +258,8 @@ def build_predict_command(video: Path, *, output_root: Path, preset: Path) -> li
         str(preset),
         "--output",
         str(output_root),
+        "--device",
+        device,
     ]
 
 
@@ -245,6 +267,7 @@ def run_generation_for_video(
     video: Path,
     *,
     preset: Path,
+    device: str,
     output_mode: str,
     log: Callable[[str], None],
     should_stop: Callable[[], bool],
@@ -256,6 +279,7 @@ def run_generation_for_video(
         scripts = run_predict_subprocess(
             video,
             preset=preset,
+            device=device,
             output_root=output_root,
             prediction_dir=prediction_dir,
             log=log,
@@ -270,6 +294,7 @@ def run_generation_for_video(
         run_predict_subprocess(
             video,
             preset=preset,
+            device=device,
             output_root=output_root,
             prediction_dir=prediction_dir,
             log=log,
@@ -284,13 +309,14 @@ def run_predict_subprocess(
     video: Path,
     *,
     preset: Path,
+    device: str,
     output_root: Path,
     prediction_dir: Path,
     log: Callable[[str], None],
     should_stop: Callable[[], bool],
     cwd: Path,
 ) -> tuple[Path, ...]:
-    command = build_predict_command(video, output_root=output_root, preset=preset)
+    command = build_predict_command(video, output_root=output_root, preset=preset, device=device)
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -357,6 +383,7 @@ class OsrGeneratorGui:
         self.output_mode = tk.StringVar(value=OUTPUT_SAME_DIR)
         self.recursive_folder = tk.BooleanVar(value=True)
         self.preset_path = tk.StringVar(value=str((project_root() / DEFAULT_PRESET).resolve()))
+        self.device = tk.StringVar(value=DEFAULT_DEVICE)
         self.status_text = tk.StringVar(value=self.t("status_select_videos"))
         self.progress_text = tk.StringVar(value="0 / 0")
         self.output_mode.trace_add("write", lambda *_args: self._refresh_table())
@@ -415,6 +442,16 @@ class OsrGeneratorGui:
         preset_entry = ttk.Entry(options, textvariable=self.preset_path)
         preset_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0), padx=(8, 8))
         self._track(ttk.Button(options, command=self.choose_preset), "browse").grid(row=1, column=2, pady=(8, 0))
+
+        self._track(ttk.Label(options), "device").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        device_combo = ttk.Combobox(
+            options,
+            textvariable=self.device,
+            state="readonly",
+            values=available_device_options(),
+            width=16,
+        )
+        device_combo.grid(row=2, column=1, sticky="w", pady=(8, 0), padx=(8, 8))
 
         center = ttk.Frame(self.root, padding=(12, 0, 12, 6))
         center.grid(row=2, column=0, sticky="nsew")
@@ -535,12 +572,14 @@ class OsrGeneratorGui:
         self.status_text.set(self.t("status_generating"))
         self._append_log("")
         self._append_log(self.t("log_preset", preset=preset))
+        self._append_log(self.t("log_device", device=self.device.get()))
         self._append_log(self.t("log_output_mode", mode=self.output_mode.get()))
         videos = list(self.videos)
         mode = self.output_mode.get()
+        device = self.device.get()
         self.worker = threading.Thread(
             target=self._generation_worker,
-            args=(videos, preset, mode),
+            args=(videos, preset, device, mode),
             daemon=True,
         )
         self.worker.start()
@@ -549,7 +588,7 @@ class OsrGeneratorGui:
         self.stop_event.set()
         self.status_text.set(self.t("status_stopping"))
 
-    def _generation_worker(self, videos: list[Path], preset: Path, mode: str) -> None:
+    def _generation_worker(self, videos: list[Path], preset: Path, device: str, mode: str) -> None:
         success = 0
         try:
             for index, video in enumerate(videos, start=1):
@@ -560,6 +599,7 @@ class OsrGeneratorGui:
                 result = run_generation_for_video(
                     video,
                     preset=preset,
+                    device=device,
                     output_mode=mode,
                     log=lambda message: self.log_queue.put(("log", f"  {message}")),
                     should_stop=self.stop_event.is_set,

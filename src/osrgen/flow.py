@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .features import MotionFeature
+import numpy as np
+
+from .features import MotionFeature, motion_feature_from_stats
 from .video import iter_gray_frames, require_cv2
 
 
@@ -16,16 +18,8 @@ def extract_motion_features(
     max_frames: int | None = None,
 ) -> list[MotionFeature]:
     cv2 = require_cv2()
-    try:
-        import numpy as np  # type: ignore
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "NumPy is required for optical-flow analysis. Install dependencies with: "
-            "python -m pip install -e ."
-        ) from exc
 
     previous_gray = None
-    previous_time_ms = 0
     features: list[MotionFeature] = []
 
     for sample in iter_gray_frames(
@@ -41,7 +35,6 @@ def extract_motion_features(
 
         if previous_gray is None:
             previous_gray = current_roi
-            previous_time_ms = sample.time_ms
             continue
 
         if previous_gray.shape != current_roi.shape:
@@ -50,21 +43,14 @@ def extract_motion_features(
         frame_diff = float(np.mean(np.abs(current_roi.astype(np.float32) - previous_gray.astype(np.float32))))
         if scene_threshold > 0 and frame_diff >= scene_threshold:
             features.append(
-                MotionFeature(
-                    time_ms=sample.time_ms,
-                    mean_dx=0.0,
-                    mean_dy=0.0,
-                    mean_mag=0.0,
-                    radial=0.0,
+                motion_feature_from_stats(
+                    sample.time_ms,
+                    (x, y, w, h),
+                    (width, height),
                     scene_cut=1,
-                    roi_x=x / max(1, width),
-                    roi_y=y / max(1, height),
-                    roi_w=w / max(1, width),
-                    roi_h=h / max(1, height),
                 )
             )
             previous_gray = current_roi
-            previous_time_ms = sample.time_ms
             continue
 
         flow = cv2.calcOpticalFlowFarneback(
@@ -84,53 +70,21 @@ def extract_motion_features(
         mag = np.sqrt(dx * dx + dy * dy)
         stats = flow_statistics(dx, dy, mag)
         features.append(
-            MotionFeature(
-                time_ms=sample.time_ms,
-                mean_dx=float(stats["mean_dx"]),
-                mean_dy=float(stats["mean_dy"]),
-                mean_mag=float(stats["mean_mag"]),
-                radial=float(stats["radial"]),
+            motion_feature_from_stats(
+                sample.time_ms,
+                (x, y, w, h),
+                (width, height),
+                stats,
                 scene_cut=0,
-                roi_x=x / max(1, width),
-                roi_y=y / max(1, height),
-                roi_w=w / max(1, width),
-                roi_h=h / max(1, height),
-                std_dx=float(stats["std_dx"]),
-                std_dy=float(stats["std_dy"]),
-                std_mag=float(stats["std_mag"]),
-                p90_mag=float(stats["p90_mag"]),
-                mean_abs_dx=float(stats["mean_abs_dx"]),
-                mean_abs_dy=float(stats["mean_abs_dy"]),
-                vertical_ratio=float(stats["vertical_ratio"]),
-                horizontal_ratio=float(stats["horizontal_ratio"]),
-                center_mag=float(stats["center_mag"]),
-                edge_mag=float(stats["edge_mag"]),
-                center_edge_mag_delta=float(stats["center_edge_mag_delta"]),
-                divergence=float(stats["divergence"]),
-                curl=float(stats["curl"]),
-                direction_x=float(stats["direction_x"]),
-                direction_y=float(stats["direction_y"]),
-                active_ratio=float(stats["active_ratio"]),
-                active_center_x=float(stats["active_center_x"]),
-                active_center_y=float(stats["active_center_y"]),
-                active_spread_x=float(stats["active_spread_x"]),
-                active_spread_y=float(stats["active_spread_y"]),
-                active_mean_dx=float(stats["active_mean_dx"]),
-                active_mean_dy=float(stats["active_mean_dy"]),
-                active_mean_mag=float(stats["active_mean_mag"]),
             )
         )
 
         previous_gray = current_roi
-        previous_time_ms = sample.time_ms
 
-    _ = previous_time_ms
     return features
 
 
 def flow_statistics(dx, dy, mag) -> dict[str, float]:
-    import numpy as np  # type: ignore
-
     eps = 1e-6
     mean_abs_dx = float(np.mean(np.abs(dx)))
     mean_abs_dy = float(np.mean(np.abs(dy)))
@@ -166,8 +120,6 @@ def flow_statistics(dx, dy, mag) -> dict[str, float]:
 
 
 def center_edge_magnitude(mag) -> tuple[float, float]:
-    import numpy as np  # type: ignore
-
     height, width = mag.shape[:2]
     y0 = max(0, int(height * 0.25))
     y1 = min(height, int(height * 0.75))
@@ -186,8 +138,6 @@ def center_edge_magnitude(mag) -> tuple[float, float]:
 
 
 def flow_derivatives(dx, dy) -> tuple[float, float]:
-    import numpy as np  # type: ignore
-
     if dx.shape[0] < 2 or dx.shape[1] < 2:
         return 0.0, 0.0
     ddx_dy, ddx_dx = np.gradient(dx)
@@ -198,8 +148,6 @@ def flow_derivatives(dx, dy) -> tuple[float, float]:
 
 
 def active_motion_stats(dx, dy, mag) -> dict[str, float]:
-    import numpy as np  # type: ignore
-
     height, width = mag.shape[:2]
     if height == 0 or width == 0:
         return empty_active_motion_stats()
@@ -260,8 +208,6 @@ def roi_to_pixels(roi: tuple[float, float, float, float], width: int, height: in
 
 
 def radial_flow(dx, dy) -> float:
-    import numpy as np  # type: ignore
-
     height, width = dx.shape[:2]
     yy, xx = np.mgrid[0:height, 0:width]
     cx = (width - 1) / 2.0

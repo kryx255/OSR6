@@ -4,7 +4,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
-from .features import MotionFeature
+import numpy as np
+
+from .features import MotionFeature, motion_feature_from_stats
 from .flow import flow_statistics, roi_to_pixels
 from .video import iter_gray_frames, require_cv2
 
@@ -129,10 +131,6 @@ def extract_region_motion_features(
     scene_threshold: float = 35.0,
 ) -> dict[str, list[MotionFeature]]:
     cv2 = require_cv2()
-    try:
-        import numpy as np  # type: ignore
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("NumPy is required for region feature extraction.") from exc
 
     selected_regions = list(regions)
     features_by_region: dict[str, list[MotionFeature]] = {region.name: [] for region in selected_regions}
@@ -157,7 +155,7 @@ def extract_region_motion_features(
             for region in selected_regions:
                 x, y, w, h = roi_to_pixels(region.roi, width, height)
                 features_by_region[region.name].append(
-                    empty_region_feature(sample.time_ms, x, y, w, h, width, height, scene_cut=1)
+                    motion_feature_from_stats(sample.time_ms, (x, y, w, h), (width, height), scene_cut=1)
                 )
             previous_gray = gray
             continue
@@ -173,69 +171,10 @@ def extract_region_motion_features(
             mag = mag_all[y : y + h, x : x + w]
             stats = flow_statistics(dx, dy, mag)
             features_by_region[region.name].append(
-                MotionFeature(
-                    time_ms=sample.time_ms,
-                    mean_dx=float(stats["mean_dx"]),
-                    mean_dy=float(stats["mean_dy"]),
-                    mean_mag=float(stats["mean_mag"]),
-                    radial=float(stats["radial"]),
-                    scene_cut=0,
-                    roi_x=x / max(1, width),
-                    roi_y=y / max(1, height),
-                    roi_w=w / max(1, width),
-                    roi_h=h / max(1, height),
-                    std_dx=float(stats["std_dx"]),
-                    std_dy=float(stats["std_dy"]),
-                    std_mag=float(stats["std_mag"]),
-                    p90_mag=float(stats["p90_mag"]),
-                    mean_abs_dx=float(stats["mean_abs_dx"]),
-                    mean_abs_dy=float(stats["mean_abs_dy"]),
-                    vertical_ratio=float(stats["vertical_ratio"]),
-                    horizontal_ratio=float(stats["horizontal_ratio"]),
-                    center_mag=float(stats["center_mag"]),
-                    edge_mag=float(stats["edge_mag"]),
-                    center_edge_mag_delta=float(stats["center_edge_mag_delta"]),
-                    divergence=float(stats["divergence"]),
-                    curl=float(stats["curl"]),
-                    direction_x=float(stats["direction_x"]),
-                    direction_y=float(stats["direction_y"]),
-                    active_ratio=float(stats["active_ratio"]),
-                    active_center_x=float(stats["active_center_x"]),
-                    active_center_y=float(stats["active_center_y"]),
-                    active_spread_x=float(stats["active_spread_x"]),
-                    active_spread_y=float(stats["active_spread_y"]),
-                    active_mean_dx=float(stats["active_mean_dx"]),
-                    active_mean_dy=float(stats["active_mean_dy"]),
-                    active_mean_mag=float(stats["active_mean_mag"]),
-                )
+                motion_feature_from_stats(sample.time_ms, (x, y, w, h), (width, height), stats, scene_cut=0)
             )
         previous_gray = gray
     return features_by_region
-
-
-def empty_region_feature(
-    time_ms: int,
-    x: int,
-    y: int,
-    w: int,
-    h: int,
-    width: int,
-    height: int,
-    *,
-    scene_cut: int,
-) -> MotionFeature:
-    return MotionFeature(
-        time_ms=time_ms,
-        mean_dx=0.0,
-        mean_dy=0.0,
-        mean_mag=0.0,
-        radial=0.0,
-        scene_cut=scene_cut,
-        roi_x=x / max(1, width),
-        roi_y=y / max(1, height),
-        roi_w=w / max(1, width),
-        roi_h=h / max(1, height),
-    )
 
 
 def select_regions(names: tuple[str, ...] | None) -> list[CandidateRegion]:

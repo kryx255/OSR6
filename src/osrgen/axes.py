@@ -12,7 +12,6 @@ AXIS_COLUMNS = {
 
 AXIS_ORDER = tuple(AXIS_COLUMNS.keys())
 SUPPORTED_AXES = set(AXIS_COLUMNS)
-AXIS_TO_SAMPLE_KEY = dict(AXIS_COLUMNS)
 AXIS_SCRIPT_SUFFIXES = {
     "l0": "",
     "l1": "surge",

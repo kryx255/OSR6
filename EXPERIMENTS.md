@@ -12,6 +12,7 @@ This page records practical notes for the packaged runtime model.
 - Checkpoints: `models/region_all_profile_95_e20/`
 - Postprocess profile: `configs/postprocess/region_all_quality_95.json`
 - Runtime target: six-axis OSR6/SR6 script generation
+- Device default: `auto`, using CUDA for TCN inference when PyTorch reports an available CUDA device
 
 ### Why This Preset
 
@@ -37,6 +38,7 @@ Manual review preferred weak but active secondary-axis motion over nearly static
 - Checkpoint：`models/region_all_profile_95_e20/`
 - Profile：`configs/postprocess/region_all_quality_95.json`
 - 运行目标：生成六轴 OSR6/SR6 脚本
+- 设备默认值：`auto`，当 PyTorch 检测到 CUDA 可用时，TCN 推理使用 CUDA
 
 ### 选择原因
 
@@ -62,6 +64,7 @@ Manual review preferred weak but active secondary-axis motion over nearly static
 - Checkpoint: `models/region_all_profile_95_e20/`
 - 後処理 profile: `configs/postprocess/region_all_quality_95.json`
 - 実行対象: 六軸 OSR6/SR6 スクリプト生成
+- デバイス既定値: `auto`。PyTorch が CUDA を検出した場合、TCN 推論に CUDA を使います。
 
 ### 採用理由
 

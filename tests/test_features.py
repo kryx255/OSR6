@@ -58,7 +58,7 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(loaded[0].pose_detected, 1)
         self.assertEqual(loaded[0].pose_center_x, 0.4)
         self.assertIn("pose_center_x", FEATURE_COLUMNS)
-        self.assertIn("pose_center_x", MODEL_INPUT_COLUMNS)
+        self.assertNotIn("pose_center_x", MODEL_INPUT_COLUMNS)
         self.assertNotIn("time_ms", MODEL_INPUT_COLUMNS)
 
     def test_save_feature_csv_round_trips_extra_columns(self) -> None:
