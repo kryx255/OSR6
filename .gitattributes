@@ -1,0 +1,13 @@
+* text=auto
+.gitattributes text eol=lf
+*.bat text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+requirements.txt text eol=lf
+.gitignore text eol=lf
+*.csv text eol=lf

@@ -1,0 +1,26 @@
+{
+  "name": "region_hybrid_experience_95",
+  "description": "User-experience preset with stronger L0 amplitude and uncompressed secondary axes. Prefer this when weak-axis motion is better than nearly static output.",
+  "checkpoint_dir": "models/region_all_profile_95_e20",
+  "axes": ["l0", "l1", "l2", "r0", "r1", "r2"],
+  "analysis_fps": 8.0,
+  "max_width": 360,
+  "scene_threshold": 35.0,
+  "roi": [0.15, 0.15, 0.7, 0.7],
+  "postprocess_profile": "configs/postprocess/region_all_quality_95.json",
+  "axis_scales": {
+    "l0": 1.25,
+    "l1": 1.0,
+    "l2": 1.0,
+    "r0": 1.0,
+    "r1": 1.0,
+    "r2": 1.0
+  },
+  "min_interval_ms": 50,
+  "smoothing_ms": 250,
+  "min_delta": 0.0,
+  "deadband": 0.0,
+  "max_actions_per_second": null,
+  "quality_gate": "warn",
+  "quality_threshold": 50.0
+}
