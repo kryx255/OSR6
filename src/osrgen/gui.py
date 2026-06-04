@@ -43,6 +43,10 @@ LANGUAGE_PACKS = {
         "output_same_name_folder": "在视频同目录创建同名文件夹",
         "preset": "模型 preset",
         "device": "推理设备",
+        "device_auto_cpu": "自动选择（当前可用：CPU）",
+        "device_auto_gpu": "自动选择（推荐：{name}）",
+        "device_cpu": "CPU（处理器）",
+        "device_cuda_index": "GPU {index}: {name} ({device})",
         "browse": "浏览",
         "video": "视频",
         "output": "输出位置",
@@ -83,6 +87,10 @@ LANGUAGE_PACKS = {
         "output_same_name_folder": "Create a same-name folder next to video",
         "preset": "Model preset",
         "device": "Inference device",
+        "device_auto_cpu": "Auto (available: CPU)",
+        "device_auto_gpu": "Auto (recommended: {name})",
+        "device_cpu": "CPU (processor)",
+        "device_cuda_index": "GPU {index}: {name} ({device})",
         "browse": "Browse",
         "video": "Video",
         "output": "Output",
@@ -123,6 +131,10 @@ LANGUAGE_PACKS = {
         "output_same_name_folder": "動画と同名のフォルダーを作成",
         "preset": "モデル preset",
         "device": "推論デバイス",
+        "device_auto_cpu": "自動選択（利用可能: CPU）",
+        "device_auto_gpu": "自動選択（推奨: {name}）",
+        "device_cpu": "CPU（プロセッサ）",
+        "device_cuda_index": "GPU {index}: {name} ({device})",
         "browse": "参照",
         "video": "動画",
         "output": "出力先",
@@ -167,6 +179,18 @@ class GuiGenerationResult:
     video: Path
     output_dir: Path
     scripts: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class DeviceOption:
+    value: str
+    label: str
+
+
+def translated_text(language: str, key: str, **kwargs: object) -> str:
+    pack = LANGUAGE_PACKS.get(language, LANGUAGE_PACKS["en"])
+    text = pack.get(key, LANGUAGE_PACKS["en"].get(key, key))
+    return text.format(**kwargs)
 
 
 def project_root() -> Path:
@@ -233,17 +257,42 @@ def python_executable() -> str:
     return os.environ.get("OSRGEN_PYTHON_EXE") or sys.executable
 
 
-def available_device_options() -> tuple[str, ...]:
-    options = [DEFAULT_DEVICE, "cpu", "cuda"]
+def detected_cuda_devices() -> dict[str, str]:
+    devices: dict[str, str] = {}
     try:
         from .tcn import require_torch
 
         torch, _ = require_torch()
         if torch.cuda.is_available():
-            options.extend(f"cuda:{index}" for index in range(torch.cuda.device_count()))
+            for index in range(torch.cuda.device_count()):
+                devices[f"cuda:{index}"] = str(torch.cuda.get_device_name(index))
     except Exception:
         pass
-    return tuple(dict.fromkeys(options))
+    return devices
+
+
+def format_device_options(language: str, cuda_devices: dict[str, str]) -> tuple[DeviceOption, ...]:
+    sorted_cuda = sorted(cuda_devices.items(), key=lambda item: int(item[0].split(":", 1)[1]))
+    options: list[DeviceOption] = []
+    if sorted_cuda:
+        _device, name = sorted_cuda[0]
+        options.append(DeviceOption(DEFAULT_DEVICE, translated_text(language, "device_auto_gpu", name=name)))
+    else:
+        options.append(DeviceOption(DEFAULT_DEVICE, translated_text(language, "device_auto_cpu")))
+    options.append(DeviceOption("cpu", translated_text(language, "device_cpu")))
+    for device, name in sorted_cuda:
+        index = device.split(":", 1)[1]
+        options.append(
+            DeviceOption(
+                device,
+                translated_text(language, "device_cuda_index", index=index, name=name, device=device),
+            )
+        )
+    return tuple(options)
+
+
+def available_device_options(language: str = "en") -> tuple[DeviceOption, ...]:
+    return format_device_options(language, detected_cuda_devices())
 
 
 def build_predict_command(video: Path, *, output_root: Path, preset: Path, device: str = DEFAULT_DEVICE) -> list[str]:
@@ -384,6 +433,8 @@ class OsrGeneratorGui:
         self.recursive_folder = tk.BooleanVar(value=True)
         self.preset_path = tk.StringVar(value=str((project_root() / DEFAULT_PRESET).resolve()))
         self.device = tk.StringVar(value=DEFAULT_DEVICE)
+        self.device_label = tk.StringVar(value="")
+        self.device_label_to_value: dict[str, str] = {}
         self.status_text = tk.StringVar(value=self.t("status_select_videos"))
         self.progress_text = tk.StringVar(value="0 / 0")
         self.output_mode.trace_add("write", lambda *_args: self._refresh_table())
@@ -446,12 +497,14 @@ class OsrGeneratorGui:
         self._track(ttk.Label(options), "device").grid(row=2, column=0, sticky="w", pady=(8, 0))
         device_combo = ttk.Combobox(
             options,
-            textvariable=self.device,
+            textvariable=self.device_label,
             state="readonly",
-            values=available_device_options(),
-            width=16,
+            width=42,
         )
         device_combo.grid(row=2, column=1, sticky="w", pady=(8, 0), padx=(8, 8))
+        device_combo.bind("<<ComboboxSelected>>", lambda _event: self._set_device_from_label())
+        self.device_combo = device_combo
+        self._refresh_device_options()
 
         center = ttk.Frame(self.root, padding=(12, 0, 12, 6))
         center.grid(row=2, column=0, sticky="nsew")
@@ -572,11 +625,13 @@ class OsrGeneratorGui:
         self.status_text.set(self.t("status_generating"))
         self._append_log("")
         self._append_log(self.t("log_preset", preset=preset))
-        self._append_log(self.t("log_device", device=self.device.get()))
+        self._set_device_from_label()
+        device = self.device.get()
+        device_label = self.device_label.get() or device
+        self._append_log(self.t("log_device", device=device_label))
         self._append_log(self.t("log_output_mode", mode=self.output_mode.get()))
         videos = list(self.videos)
         mode = self.output_mode.get()
-        device = self.device.get()
         self.worker = threading.Thread(
             target=self._generation_worker,
             args=(videos, preset, device, mode),
@@ -666,9 +721,7 @@ class OsrGeneratorGui:
 
     def t(self, key: str, **kwargs: object) -> str:
         language = self.language.get() if hasattr(self, "language") else default_language()
-        pack = LANGUAGE_PACKS.get(language, LANGUAGE_PACKS["en"])
-        text = pack.get(key, LANGUAGE_PACKS["en"].get(key, key))
-        return text.format(**kwargs)
+        return translated_text(language, key, **kwargs)
 
     def _track(self, widget: object, key: str, option: str = "text"):
         self.translatable_widgets.append((widget, key, option))
@@ -683,12 +736,28 @@ class OsrGeneratorGui:
         self.video_table.heading("output", text=self.t("output"))
         if hasattr(self, "language_combo"):
             self.language_combo.set(LANGUAGE_NAMES.get(language, LANGUAGE_NAMES["en"]))
+        self._refresh_device_options()
 
     def _set_language_from_name(self, name: str) -> None:
         for key, label in LANGUAGE_NAMES.items():
             if label == name:
                 self.language.set(key)
                 return
+
+    def _refresh_device_options(self) -> None:
+        if not hasattr(self, "device_combo"):
+            return
+        current_value = self.device.get() or DEFAULT_DEVICE
+        options = available_device_options(self.language.get())
+        labels = [option.label for option in options]
+        self.device_label_to_value = {option.label: option.value for option in options}
+        self.device_combo.configure(values=labels)
+        selected = next((option.label for option in options if option.value == current_value), labels[0])
+        self.device_label.set(selected)
+        self.device.set(self.device_label_to_value.get(selected, DEFAULT_DEVICE))
+
+    def _set_device_from_label(self) -> None:
+        self.device.set(self.device_label_to_value.get(self.device_label.get(), DEFAULT_DEVICE))
 
 
 def main() -> int:

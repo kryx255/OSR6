@@ -7,6 +7,7 @@ import unittest
 from osrgen.gui import OUTPUT_SAME_DIR, OUTPUT_SAME_NAME_FOLDER
 from osrgen.gui import build_predict_command, collect_generated_scripts, copy_scripts_to_video_directory
 from osrgen.gui import final_output_dir_for
+from osrgen.gui import format_device_options
 from osrgen.gui import normalize_video_paths, prediction_dir_for, scan_video_folder
 from osrgen.gui import should_clear_video_queue_after_run
 
@@ -88,6 +89,14 @@ class GuiHelperTests(unittest.TestCase):
 
         self.assertIn("--device", command)
         self.assertEqual(command[command.index("--device") + 1], "cuda:0")
+
+    def test_device_options_show_hardware_labels(self) -> None:
+        options = format_device_options("zh", {"cuda:0": "NVIDIA GeForce RTX 5090"})
+
+        self.assertEqual([option.value for option in options], ["auto", "cpu", "cuda:0"])
+        self.assertIn("NVIDIA GeForce RTX 5090", options[0].label)
+        self.assertIn("CPU", options[1].label)
+        self.assertEqual(options[2].label, "GPU 0: NVIDIA GeForce RTX 5090 (cuda:0)")
 
 
 if __name__ == "__main__":
