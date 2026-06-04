@@ -21,6 +21,9 @@ OUTPUT_SAME_DIR = "same_dir"
 OUTPUT_SAME_NAME_FOLDER = "same_name_folder"
 LOG_POLL_MS = 100
 DEFAULT_DEVICE = "auto"
+SPEED_QUALITY = "quality"
+SPEED_BALANCED = "balanced"
+SPEED_FAST = "fast"
 
 
 LANGUAGE_NAMES = {
@@ -43,6 +46,10 @@ LANGUAGE_PACKS = {
         "output_same_name_folder": "在视频同目录创建同名文件夹",
         "preset": "模型 preset",
         "device": "推理设备",
+        "speed": "速度/质量",
+        "speed_quality": "质量优先（8fps / 360px）",
+        "speed_balanced": "均衡（6fps / 320px）",
+        "speed_fast": "快速（4fps / 256px）",
         "device_auto_cpu": "自动选择（当前可用：CPU）",
         "device_auto_gpu": "自动选择（推荐：{name}）",
         "device_cpu": "CPU（处理器）",
@@ -68,6 +75,7 @@ LANGUAGE_PACKS = {
         "status_done": "完成 {success} / {total}。",
         "log_preset": "使用 preset: {preset}",
         "log_device": "推理设备: {device}",
+        "log_speed": "速度/质量: {speed}",
         "log_output_mode": "输出模式: {mode}",
         "log_start": "[{index}/{total}] 开始: {video}",
         "log_done": "[{index}/{total}] 完成: {count} 个脚本 -> {output} ({elapsed:.1f}s)",
@@ -87,6 +95,10 @@ LANGUAGE_PACKS = {
         "output_same_name_folder": "Create a same-name folder next to video",
         "preset": "Model preset",
         "device": "Inference device",
+        "speed": "Speed/quality",
+        "speed_quality": "Quality (8fps / 360px)",
+        "speed_balanced": "Balanced (6fps / 320px)",
+        "speed_fast": "Fast (4fps / 256px)",
         "device_auto_cpu": "Auto (available: CPU)",
         "device_auto_gpu": "Auto (recommended: {name})",
         "device_cpu": "CPU (processor)",
@@ -112,6 +124,7 @@ LANGUAGE_PACKS = {
         "status_done": "Completed {success} / {total}.",
         "log_preset": "Preset: {preset}",
         "log_device": "Device: {device}",
+        "log_speed": "Speed/quality: {speed}",
         "log_output_mode": "Output mode: {mode}",
         "log_start": "[{index}/{total}] Start: {video}",
         "log_done": "[{index}/{total}] Done: {count} scripts -> {output} ({elapsed:.1f}s)",
@@ -131,6 +144,10 @@ LANGUAGE_PACKS = {
         "output_same_name_folder": "動画と同名のフォルダーを作成",
         "preset": "モデル preset",
         "device": "推論デバイス",
+        "speed": "速度/品質",
+        "speed_quality": "品質優先（8fps / 360px）",
+        "speed_balanced": "バランス（6fps / 320px）",
+        "speed_fast": "高速（4fps / 256px）",
         "device_auto_cpu": "自動選択（利用可能: CPU）",
         "device_auto_gpu": "自動選択（推奨: {name}）",
         "device_cpu": "CPU（プロセッサ）",
@@ -156,6 +173,7 @@ LANGUAGE_PACKS = {
         "status_done": "完了 {success} / {total}。",
         "log_preset": "Preset: {preset}",
         "log_device": "デバイス: {device}",
+        "log_speed": "速度/品質: {speed}",
         "log_output_mode": "出力モード: {mode}",
         "log_start": "[{index}/{total}] 開始: {video}",
         "log_done": "[{index}/{total}] 完了: {count} scripts -> {output} ({elapsed:.1f}s)",
@@ -187,10 +205,33 @@ class DeviceOption:
     label: str
 
 
+@dataclass(frozen=True)
+class SpeedOption:
+    value: str
+    label: str
+    analysis_fps: float | None
+    max_width: int | None
+
+
 def translated_text(language: str, key: str, **kwargs: object) -> str:
     pack = LANGUAGE_PACKS.get(language, LANGUAGE_PACKS["en"])
     text = pack.get(key, LANGUAGE_PACKS["en"].get(key, key))
     return text.format(**kwargs)
+
+
+def format_speed_options(language: str) -> tuple[SpeedOption, ...]:
+    return (
+        SpeedOption(SPEED_QUALITY, translated_text(language, "speed_quality"), None, None),
+        SpeedOption(SPEED_BALANCED, translated_text(language, "speed_balanced"), 6.0, 320),
+        SpeedOption(SPEED_FAST, translated_text(language, "speed_fast"), 4.0, 256),
+    )
+
+
+def speed_overrides(value: str) -> tuple[float | None, int | None]:
+    for option in format_speed_options("en"):
+        if option.value == value:
+            return option.analysis_fps, option.max_width
+    return None, None
 
 
 def project_root() -> Path:
@@ -295,8 +336,16 @@ def available_device_options(language: str = "en") -> tuple[DeviceOption, ...]:
     return format_device_options(language, detected_cuda_devices())
 
 
-def build_predict_command(video: Path, *, output_root: Path, preset: Path, device: str = DEFAULT_DEVICE) -> list[str]:
-    return [
+def build_predict_command(
+    video: Path,
+    *,
+    output_root: Path,
+    preset: Path,
+    device: str = DEFAULT_DEVICE,
+    analysis_fps: float | None = None,
+    max_width: int | None = None,
+) -> list[str]:
+    command = [
         python_executable(),
         "-m",
         "osrgen",
@@ -310,6 +359,11 @@ def build_predict_command(video: Path, *, output_root: Path, preset: Path, devic
         "--device",
         device,
     ]
+    if analysis_fps is not None:
+        command.extend(["--analysis-fps", str(analysis_fps)])
+    if max_width is not None:
+        command.extend(["--max-width", str(max_width)])
+    return command
 
 
 def run_generation_for_video(
@@ -317,6 +371,8 @@ def run_generation_for_video(
     *,
     preset: Path,
     device: str,
+    analysis_fps: float | None,
+    max_width: int | None,
     output_mode: str,
     log: Callable[[str], None],
     should_stop: Callable[[], bool],
@@ -329,6 +385,8 @@ def run_generation_for_video(
             video,
             preset=preset,
             device=device,
+            analysis_fps=analysis_fps,
+            max_width=max_width,
             output_root=output_root,
             prediction_dir=prediction_dir,
             log=log,
@@ -344,6 +402,8 @@ def run_generation_for_video(
             video,
             preset=preset,
             device=device,
+            analysis_fps=analysis_fps,
+            max_width=max_width,
             output_root=output_root,
             prediction_dir=prediction_dir,
             log=log,
@@ -359,13 +419,22 @@ def run_predict_subprocess(
     *,
     preset: Path,
     device: str,
+    analysis_fps: float | None,
+    max_width: int | None,
     output_root: Path,
     prediction_dir: Path,
     log: Callable[[str], None],
     should_stop: Callable[[], bool],
     cwd: Path,
 ) -> tuple[Path, ...]:
-    command = build_predict_command(video, output_root=output_root, preset=preset, device=device)
+    command = build_predict_command(
+        video,
+        output_root=output_root,
+        preset=preset,
+        device=device,
+        analysis_fps=analysis_fps,
+        max_width=max_width,
+    )
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -435,6 +504,9 @@ class OsrGeneratorGui:
         self.device = tk.StringVar(value=DEFAULT_DEVICE)
         self.device_label = tk.StringVar(value="")
         self.device_label_to_value: dict[str, str] = {}
+        self.speed_profile = tk.StringVar(value=SPEED_QUALITY)
+        self.speed_label = tk.StringVar(value="")
+        self.speed_label_to_value: dict[str, str] = {}
         self.status_text = tk.StringVar(value=self.t("status_select_videos"))
         self.progress_text = tk.StringVar(value="0 / 0")
         self.output_mode.trace_add("write", lambda *_args: self._refresh_table())
@@ -505,6 +577,18 @@ class OsrGeneratorGui:
         device_combo.bind("<<ComboboxSelected>>", lambda _event: self._set_device_from_label())
         self.device_combo = device_combo
         self._refresh_device_options()
+
+        self._track(ttk.Label(options), "speed").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        speed_combo = ttk.Combobox(
+            options,
+            textvariable=self.speed_label,
+            state="readonly",
+            width=28,
+        )
+        speed_combo.grid(row=3, column=1, sticky="w", pady=(8, 0), padx=(8, 8))
+        speed_combo.bind("<<ComboboxSelected>>", lambda _event: self._set_speed_from_label())
+        self.speed_combo = speed_combo
+        self._refresh_speed_options()
 
         center = ttk.Frame(self.root, padding=(12, 0, 12, 6))
         center.grid(row=2, column=0, sticky="nsew")
@@ -626,15 +710,18 @@ class OsrGeneratorGui:
         self._append_log("")
         self._append_log(self.t("log_preset", preset=preset))
         self._set_device_from_label()
+        self._set_speed_from_label()
         device = self.device.get()
+        analysis_fps, max_width = speed_overrides(self.speed_profile.get())
         device_label = self.device_label.get() or device
         self._append_log(self.t("log_device", device=device_label))
+        self._append_log(self.t("log_speed", speed=self.speed_label.get() or self.speed_profile.get()))
         self._append_log(self.t("log_output_mode", mode=self.output_mode.get()))
         videos = list(self.videos)
         mode = self.output_mode.get()
         self.worker = threading.Thread(
             target=self._generation_worker,
-            args=(videos, preset, device, mode),
+            args=(videos, preset, device, analysis_fps, max_width, mode),
             daemon=True,
         )
         self.worker.start()
@@ -643,7 +730,15 @@ class OsrGeneratorGui:
         self.stop_event.set()
         self.status_text.set(self.t("status_stopping"))
 
-    def _generation_worker(self, videos: list[Path], preset: Path, device: str, mode: str) -> None:
+    def _generation_worker(
+        self,
+        videos: list[Path],
+        preset: Path,
+        device: str,
+        analysis_fps: float | None,
+        max_width: int | None,
+        mode: str,
+    ) -> None:
         success = 0
         try:
             for index, video in enumerate(videos, start=1):
@@ -655,6 +750,8 @@ class OsrGeneratorGui:
                     video,
                     preset=preset,
                     device=device,
+                    analysis_fps=analysis_fps,
+                    max_width=max_width,
                     output_mode=mode,
                     log=lambda message: self.log_queue.put(("log", f"  {message}")),
                     should_stop=self.stop_event.is_set,
@@ -737,6 +834,7 @@ class OsrGeneratorGui:
         if hasattr(self, "language_combo"):
             self.language_combo.set(LANGUAGE_NAMES.get(language, LANGUAGE_NAMES["en"]))
         self._refresh_device_options()
+        self._refresh_speed_options()
 
     def _set_language_from_name(self, name: str) -> None:
         for key, label in LANGUAGE_NAMES.items():
@@ -758,6 +856,21 @@ class OsrGeneratorGui:
 
     def _set_device_from_label(self) -> None:
         self.device.set(self.device_label_to_value.get(self.device_label.get(), DEFAULT_DEVICE))
+
+    def _refresh_speed_options(self) -> None:
+        if not hasattr(self, "speed_combo"):
+            return
+        current_value = self.speed_profile.get() or SPEED_QUALITY
+        options = format_speed_options(self.language.get())
+        labels = [option.label for option in options]
+        self.speed_label_to_value = {option.label: option.value for option in options}
+        self.speed_combo.configure(values=labels)
+        selected = next((option.label for option in options if option.value == current_value), labels[0])
+        self.speed_label.set(selected)
+        self.speed_profile.set(self.speed_label_to_value.get(selected, SPEED_QUALITY))
+
+    def _set_speed_from_label(self) -> None:
+        self.speed_profile.set(self.speed_label_to_value.get(self.speed_label.get(), SPEED_QUALITY))
 
 
 def main() -> int:

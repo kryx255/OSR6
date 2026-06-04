@@ -29,9 +29,17 @@ uv sync --extra model
 - Add one or many videos.
 - Add a folder of videos, optionally recursive.
 - Write scripts next to each video, or create a same-name output folder next to each video.
-- Choose inference device: `auto`, `cpu`, `cuda`, or a specific device such as `cuda:0`.
+- Choose an available inference device by name, such as CPU or a detected NVIDIA GPU.
+- Choose speed/quality mode: Quality, Balanced, or Fast.
 - The queue is cleared after a fully successful run, so repeated clicks do not regenerate previous videos.
 - The GUI supports Simplified Chinese, English, and Japanese.
+
+### Speed
+
+- OSRGen caches extracted video features locally and reuses them when the same video and analysis settings are generated again.
+- The default Quality mode keeps the packaged preset settings. Balanced and Fast reduce optical-flow input size for faster first-time generation.
+- The PyTorch device speeds up the TCN model step. OpenCV video decoding and optical-flow extraction are still mostly CPU-bound.
+- Disable the local cache with `--no-feature-cache`, or set it with `--feature-cache-dir`.
 
 ### CLI
 
@@ -95,9 +103,17 @@ uv sync --extra model
 - `添加视频`：选择一个或多个视频。
 - `添加文件夹`：批量加入文件夹里的视频，可勾选递归。
 - 输出方式可以选择直接生成在视频同目录，或在视频同目录创建同名文件夹。
-- 可选择推理设备：`auto`、`cpu`、`cuda`，或指定 `cuda:0`。
+- 可按名称选择本机可用推理设备，例如 CPU 或检测到的 NVIDIA 显卡。
+- 可选择速度/质量档位：质量优先、均衡、快速。
 - 生成成功后，当前待生成列表会自动清空，避免重复生成同一批视频。
 - GUI 支持中文、English、日本語，可在右上角切换。
+
+### 加速
+
+- OSRGen 会在本地缓存已抽取的视频特征；同一视频、同一分析设置再次生成时会复用缓存。
+- 默认“质量优先”保持打包 preset 设置。“均衡”和“快速”会降低光流输入规模，加快第一次生成。
+- 推理设备会加速 TCN 模型步骤；OpenCV 视频解码和光流特征提取仍主要受 CPU 影响。
+- 命令行可用 `--no-feature-cache` 关闭缓存，或用 `--feature-cache-dir` 指定缓存目录。
 
 ### 命令行
 
@@ -161,9 +177,17 @@ uv sync --extra model
 - 1つまたは複数の動画を追加できます。
 - フォルダー内の動画を一括追加できます。
 - スクリプトを動画と同じフォルダーに出力するか、動画と同名のフォルダーを作って出力できます。
-- 推論デバイスを選択できます: `auto`、`cpu`、`cuda`、または `cuda:0`。
+- CPU や検出された NVIDIA GPU など、利用可能な推論デバイスを名前で選択できます。
+- 速度/品質モードを選択できます: 品質、バランス、高速。
 - 生成がすべて成功するとキューを自動でクリアします。
 - GUI は簡体字中国語、英語、日本語に対応しています。
+
+### 高速化
+
+- OSRGen は抽出済みの動画特徴をローカルにキャッシュし、同じ動画と解析設定で再生成すると再利用します。
+- 既定の品質モードは packaged preset を維持します。バランスと高速は光フロー入力サイズを下げ、初回生成を速くします。
+- PyTorch デバイスは TCN モデル部分を高速化します。OpenCV の動画デコードと光フロー抽出は主に CPU で処理されます。
+- CLI では `--no-feature-cache` でキャッシュを無効化し、`--feature-cache-dir` で保存先を指定できます。
 
 ### CLI
 

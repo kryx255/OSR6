@@ -98,6 +98,8 @@ def add_predict_runtime_overrides(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--quality-gate", choices=["warn", "neutralize", "omit"], default=None)
     parser.add_argument("--quality-threshold", type=float, default=None)
     parser.add_argument("--device", default=None, help="Inference device: auto, cpu, cuda, or cuda:0.")
+    parser.add_argument("--no-feature-cache", action="store_true", help="Disable the local extracted-feature cache.")
+    parser.add_argument("--feature-cache-dir", type=Path, default=None, help="Override the extracted-feature cache directory.")
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -168,6 +170,8 @@ def build_predict_all_config(
     quality_gate = str(preset_value(args, preset, "quality_gate", "warn"))
     quality_threshold = float(preset_value(args, preset, "quality_threshold", 50.0))
     device = str(preset_value(args, preset, "device", "auto"))
+    feature_cache = not bool(getattr(args, "no_feature_cache", False))
+    feature_cache_dir = getattr(args, "feature_cache_dir", None)
     postprocess_profile = preset_path(args, preset, "postprocess_profile", None)
     axis_scale_profile = preset_path(args, preset, "axis_scale_profile", None)
 
@@ -204,6 +208,8 @@ def build_predict_all_config(
         quality_gate=quality_gate,
         quality_threshold=quality_threshold,
         device=device,
+        feature_cache=feature_cache,
+        feature_cache_dir=str(feature_cache_dir) if feature_cache_dir else None,
     )
 
 

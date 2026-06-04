@@ -42,6 +42,7 @@ class PredictSmokeTests(unittest.TestCase):
                     smoothing_ms=0,
                     min_interval_ms=50,
                     quality_gate="warn",
+                    feature_cache=False,
                 )
             )
 

@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 import csv
 from pathlib import Path
+import shutil
 from typing import Any, Iterable
 
 import numpy as np
 
 from .axes import AXIS_ORDER, AXIS_SCRIPT_SUFFIXES, SUPPORTED_AXES
+from .feature_cache import feature_cache_request, load_cached_features_path, store_cached_features
 from .features import MODEL_INPUT_COLUMNS, MotionFeature, load_features_csv, save_features_csv
 from .flow import extract_motion_features
 from .funscript import Funscript
@@ -52,6 +54,8 @@ class ModelPredictAllConfig:
     quality_gate: str = "warn"
     quality_threshold: float = 50.0
     device: str = "auto"
+    feature_cache: bool = True
+    feature_cache_dir: str | None = None
 
     def to_json(self) -> dict[str, object]:
         data = asdict(self)
@@ -217,6 +221,13 @@ def load_or_extract_features(
         return load_features_csv(features_path)
     if input_path.suffix.lower() == ".csv":
         return load_features_csv(input_path)
+    cache_request = build_feature_cache_request(config, input_path, region_features=region_features)
+    features_path = out_dir / "features.csv"
+    if config.feature_cache:
+        cached_features = load_cached_features_path(cache_request, config.feature_cache_dir)
+        if cached_features is not None:
+            shutil.copy2(cached_features, features_path)
+            return load_features_csv(cached_features)
     if region_features:
         features = extract_motion_features_with_region_features(
             input_path,
@@ -235,8 +246,31 @@ def load_or_extract_features(
             roi=config.roi,
             scene_threshold=config.scene_threshold,
         )
-    save_features_csv(features, out_dir / "features.csv")
+    save_features_csv(features, features_path)
+    if config.feature_cache:
+        store_cached_features(cache_request, features_path, config.feature_cache_dir)
     return features
+
+
+def build_feature_cache_request(
+    config: ModelPredictAllConfig,
+    input_path: Path,
+    *,
+    region_features: bool,
+) -> dict[str, object]:
+    regions = tuple(region.name for region in select_regions(config.region_regions)) if region_features else ()
+    signals = tuple(config.region_signals) if region_features else ()
+    return feature_cache_request(
+        input_path=input_path,
+        input_fingerprint=file_fingerprint(input_path),
+        analysis_fps=config.analysis_fps,
+        max_width=config.max_width,
+        scene_threshold=config.scene_threshold,
+        roi=config.roi,
+        region_features=region_features,
+        region_regions=regions,
+        region_signals=signals,
+    )
 
 
 def load_checkpoint(path: str | Path, *, device: str | object = "auto") -> dict[str, Any]:

@@ -8,6 +8,7 @@ from osrgen.gui import OUTPUT_SAME_DIR, OUTPUT_SAME_NAME_FOLDER
 from osrgen.gui import build_predict_command, collect_generated_scripts, copy_scripts_to_video_directory
 from osrgen.gui import final_output_dir_for
 from osrgen.gui import format_device_options
+from osrgen.gui import format_speed_options, speed_overrides
 from osrgen.gui import normalize_video_paths, prediction_dir_for, scan_video_folder
 from osrgen.gui import should_clear_video_queue_after_run
 
@@ -90,6 +91,18 @@ class GuiHelperTests(unittest.TestCase):
         self.assertIn("--device", command)
         self.assertEqual(command[command.index("--device") + 1], "cuda:0")
 
+    def test_predict_command_includes_speed_overrides(self) -> None:
+        command = build_predict_command(
+            Path("C:/videos/demo.mp4"),
+            output_root=Path("C:/out"),
+            preset=Path("preset.json"),
+            analysis_fps=4.0,
+            max_width=256,
+        )
+
+        self.assertEqual(command[command.index("--analysis-fps") + 1], "4.0")
+        self.assertEqual(command[command.index("--max-width") + 1], "256")
+
     def test_device_options_show_hardware_labels(self) -> None:
         options = format_device_options("zh", {"cuda:0": "NVIDIA GeForce RTX 5090"})
 
@@ -97,6 +110,14 @@ class GuiHelperTests(unittest.TestCase):
         self.assertIn("NVIDIA GeForce RTX 5090", options[0].label)
         self.assertIn("CPU", options[1].label)
         self.assertEqual(options[2].label, "GPU 0: NVIDIA GeForce RTX 5090 (cuda:0)")
+
+    def test_speed_options_map_to_runtime_overrides(self) -> None:
+        options = format_speed_options("zh")
+
+        self.assertEqual([option.value for option in options], ["quality", "balanced", "fast"])
+        self.assertEqual(speed_overrides("quality"), (None, None))
+        self.assertEqual(speed_overrides("balanced"), (6.0, 320))
+        self.assertEqual(speed_overrides("fast"), (4.0, 256))
 
 
 if __name__ == "__main__":

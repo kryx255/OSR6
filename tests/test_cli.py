@@ -57,6 +57,9 @@ class CliTests(unittest.TestCase):
                 "60",
                 "--device",
                 "cuda:0",
+                "--no-feature-cache",
+                "--feature-cache-dir",
+                "cache",
             ]
         )
 
@@ -67,6 +70,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.quality_gate, "neutralize")
         self.assertEqual(args.quality_threshold, 60.0)
         self.assertEqual(args.device, "cuda:0")
+        self.assertTrue(args.no_feature_cache)
+        self.assertEqual(args.feature_cache_dir, Path("cache"))
 
     def test_validate_preset_parser(self) -> None:
         parser = build_parser()
