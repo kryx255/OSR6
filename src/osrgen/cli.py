@@ -66,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--preset", type=Path, default=DEFAULT_PRESET)
     batch.add_argument("--recursive", action="store_true")
     batch.add_argument("--force", action="store_true", help="Regenerate even when prediction_all.json matches.")
+    batch.add_argument("--workers", type=int, default=1, help="Number of videos to generate in parallel.")
     add_predict_runtime_overrides(batch)
     batch.set_defaults(func=cmd_model_batch_predict)
 
@@ -132,6 +133,7 @@ def cmd_model_batch_predict(args: argparse.Namespace) -> int:
             predict=predict,
             recursive=bool(args.recursive),
             resume=not bool(args.force),
+            workers=max(1, int(args.workers)),
         )
     )
     ok = sum(1 for result in results if result.status in {"ok", "skipped_existing"})

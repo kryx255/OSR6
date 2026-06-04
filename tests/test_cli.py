@@ -109,6 +109,8 @@ class CliTests(unittest.TestCase):
                 "auto",
                 "--recursive",
                 "--force",
+                "--workers",
+                "3",
             ]
         )
 
@@ -117,6 +119,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.device, "auto")
         self.assertTrue(args.recursive)
         self.assertTrue(args.force)
+        self.assertEqual(args.workers, 3)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,7 @@ flowchart LR
 - Postprocess profile: `configs/postprocess/region_all_quality_95.json`
 - Inference device: `auto` by default. OpenCV feature extraction remains CPU-bound; TCN inference uses the selected PyTorch device.
 - Speed controls: GUI Quality/Balanced/Fast modes adjust optical-flow sampling size; the local feature cache speeds repeated generation.
+- Parallelism: batch jobs can process multiple videos concurrently with bounded worker counts. A single video remains sequential through frame sampling and optical flow.
 - GUI, CLI, runtime code, and runtime tests
 
 ## 中文简体
@@ -76,6 +77,7 @@ flowchart LR
 - 后处理 profile：`configs/postprocess/region_all_quality_95.json`
 - 推理设备：默认 `auto`。OpenCV 特征提取仍在 CPU，TCN 推理使用选择的 PyTorch 设备。
 - 速度控制：GUI 的质量优先/均衡/快速会调整光流采样规模；本地特征缓存会加速重复生成。
+- 并行方式：批量任务可以用受控 worker 数同时处理多个视频。单个视频的抽帧和光流仍保持顺序处理。
 - GUI、CLI、推理代码和测试
 
 ## 日本語
@@ -114,4 +116,5 @@ flowchart LR
 - 後処理 profile: `configs/postprocess/region_all_quality_95.json`
 - 推論デバイス: 既定は `auto`。OpenCV 特徴抽出は CPU、TCN 推論は選択された PyTorch デバイスを使います。
 - 速度設定: GUI の品質/バランス/高速モードは光フローのサンプリング量を調整し、ローカル特徴キャッシュは再生成を高速化します。
+- 並列処理: 一括生成では worker 数を制限しながら複数動画を同時に処理できます。単一動画のフレームサンプリングと光フローは順次処理です。
 - GUI、CLI、推論コード、実行版テスト

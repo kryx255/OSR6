@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import locale
 import os
@@ -24,6 +25,7 @@ DEFAULT_DEVICE = "auto"
 SPEED_QUALITY = "quality"
 SPEED_BALANCED = "balanced"
 SPEED_FAST = "fast"
+DEFAULT_WORKERS = 1
 
 
 LANGUAGE_NAMES = {
@@ -50,6 +52,7 @@ LANGUAGE_PACKS = {
         "speed_quality": "质量优先（8fps / 360px）",
         "speed_balanced": "均衡（6fps / 320px）",
         "speed_fast": "快速（4fps / 256px）",
+        "workers": "并行任务",
         "device_auto_cpu": "自动选择（当前可用：CPU）",
         "device_auto_gpu": "自动选择（推荐：{name}）",
         "device_cpu": "CPU（处理器）",
@@ -76,6 +79,7 @@ LANGUAGE_PACKS = {
         "log_preset": "使用 preset: {preset}",
         "log_device": "推理设备: {device}",
         "log_speed": "速度/质量: {speed}",
+        "log_workers": "并行任务: {workers}",
         "log_output_mode": "输出模式: {mode}",
         "log_start": "[{index}/{total}] 开始: {video}",
         "log_done": "[{index}/{total}] 完成: {count} 个脚本 -> {output} ({elapsed:.1f}s)",
@@ -99,6 +103,7 @@ LANGUAGE_PACKS = {
         "speed_quality": "Quality (8fps / 360px)",
         "speed_balanced": "Balanced (6fps / 320px)",
         "speed_fast": "Fast (4fps / 256px)",
+        "workers": "Parallel jobs",
         "device_auto_cpu": "Auto (available: CPU)",
         "device_auto_gpu": "Auto (recommended: {name})",
         "device_cpu": "CPU (processor)",
@@ -125,6 +130,7 @@ LANGUAGE_PACKS = {
         "log_preset": "Preset: {preset}",
         "log_device": "Device: {device}",
         "log_speed": "Speed/quality: {speed}",
+        "log_workers": "Parallel jobs: {workers}",
         "log_output_mode": "Output mode: {mode}",
         "log_start": "[{index}/{total}] Start: {video}",
         "log_done": "[{index}/{total}] Done: {count} scripts -> {output} ({elapsed:.1f}s)",
@@ -148,6 +154,7 @@ LANGUAGE_PACKS = {
         "speed_quality": "品質優先（8fps / 360px）",
         "speed_balanced": "バランス（6fps / 320px）",
         "speed_fast": "高速（4fps / 256px）",
+        "workers": "並列ジョブ",
         "device_auto_cpu": "自動選択（利用可能: CPU）",
         "device_auto_gpu": "自動選択（推奨: {name}）",
         "device_cpu": "CPU（プロセッサ）",
@@ -174,6 +181,7 @@ LANGUAGE_PACKS = {
         "log_preset": "Preset: {preset}",
         "log_device": "デバイス: {device}",
         "log_speed": "速度/品質: {speed}",
+        "log_workers": "並列ジョブ: {workers}",
         "log_output_mode": "出力モード: {mode}",
         "log_start": "[{index}/{total}] 開始: {video}",
         "log_done": "[{index}/{total}] 完了: {count} scripts -> {output} ({elapsed:.1f}s)",
@@ -232,6 +240,19 @@ def speed_overrides(value: str) -> tuple[float | None, int | None]:
         if option.value == value:
             return option.analysis_fps, option.max_width
     return None, None
+
+
+def available_worker_options(cpu_count: int | None = None) -> tuple[str, ...]:
+    count = max(1, int(cpu_count if cpu_count is not None else (os.cpu_count() or 1)))
+    max_workers = max(1, min(4, count))
+    return tuple(str(value) for value in range(1, max_workers + 1))
+
+
+def parse_worker_count(value: str | int | None) -> int:
+    try:
+        return max(1, int(value if value is not None else DEFAULT_WORKERS))
+    except (TypeError, ValueError):
+        return DEFAULT_WORKERS
 
 
 def project_root() -> Path:
@@ -507,6 +528,7 @@ class OsrGeneratorGui:
         self.speed_profile = tk.StringVar(value=SPEED_QUALITY)
         self.speed_label = tk.StringVar(value="")
         self.speed_label_to_value: dict[str, str] = {}
+        self.parallel_workers = tk.StringVar(value=str(DEFAULT_WORKERS))
         self.status_text = tk.StringVar(value=self.t("status_select_videos"))
         self.progress_text = tk.StringVar(value="0 / 0")
         self.output_mode.trace_add("write", lambda *_args: self._refresh_table())
@@ -589,6 +611,16 @@ class OsrGeneratorGui:
         speed_combo.bind("<<ComboboxSelected>>", lambda _event: self._set_speed_from_label())
         self.speed_combo = speed_combo
         self._refresh_speed_options()
+
+        self._track(ttk.Label(options), "workers").grid(row=4, column=0, sticky="w", pady=(8, 0))
+        workers_combo = ttk.Combobox(
+            options,
+            textvariable=self.parallel_workers,
+            state="readonly",
+            values=available_worker_options(),
+            width=8,
+        )
+        workers_combo.grid(row=4, column=1, sticky="w", pady=(8, 0), padx=(8, 8))
 
         center = ttk.Frame(self.root, padding=(12, 0, 12, 6))
         center.grid(row=2, column=0, sticky="nsew")
@@ -713,15 +745,17 @@ class OsrGeneratorGui:
         self._set_speed_from_label()
         device = self.device.get()
         analysis_fps, max_width = speed_overrides(self.speed_profile.get())
+        workers = min(parse_worker_count(self.parallel_workers.get()), len(self.videos))
         device_label = self.device_label.get() or device
         self._append_log(self.t("log_device", device=device_label))
         self._append_log(self.t("log_speed", speed=self.speed_label.get() or self.speed_profile.get()))
+        self._append_log(self.t("log_workers", workers=workers))
         self._append_log(self.t("log_output_mode", mode=self.output_mode.get()))
         videos = list(self.videos)
         mode = self.output_mode.get()
         self.worker = threading.Thread(
             target=self._generation_worker,
-            args=(videos, preset, device, analysis_fps, max_width, mode),
+            args=(videos, preset, device, analysis_fps, max_width, mode, workers),
             daemon=True,
         )
         self.worker.start()
@@ -738,45 +772,94 @@ class OsrGeneratorGui:
         analysis_fps: float | None,
         max_width: int | None,
         mode: str,
+        workers: int,
     ) -> None:
         success = 0
+        completed = 0
         try:
-            for index, video in enumerate(videos, start=1):
-                if self.stop_event.is_set():
-                    break
-                self.log_queue.put(("log", self.t("log_start", index=index, total=len(videos), video=video)))
-                started = time.time()
-                result = run_generation_for_video(
-                    video,
-                    preset=preset,
-                    device=device,
-                    analysis_fps=analysis_fps,
-                    max_width=max_width,
-                    output_mode=mode,
-                    log=lambda message: self.log_queue.put(("log", f"  {message}")),
-                    should_stop=self.stop_event.is_set,
-                )
-                elapsed = time.time() - started
-                success += 1
-                self.log_queue.put(
-                    (
-                        "log",
-                        self.t(
-                            "log_done",
-                            index=index,
-                            total=len(videos),
-                            count=len(result.scripts),
-                            output=result.output_dir,
-                            elapsed=elapsed,
-                        ),
-                    )
-                )
-                self.log_queue.put(("progress", index))
+            worker_count = min(max(1, workers), max(1, len(videos)))
+            if worker_count <= 1:
+                for index, video in enumerate(videos, start=1):
+                    if self.stop_event.is_set():
+                        break
+                    if self._run_generation_job(index, len(videos), video, preset, device, analysis_fps, max_width, mode):
+                        success += 1
+                    completed += 1
+                    self.log_queue.put(("progress", completed))
+            else:
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    futures = [
+                        executor.submit(
+                            self._run_generation_job,
+                            index,
+                            len(videos),
+                            video,
+                            preset,
+                            device,
+                            analysis_fps,
+                            max_width,
+                            mode,
+                        )
+                        for index, video in enumerate(videos, start=1)
+                    ]
+                    for future in as_completed(futures):
+                        try:
+                            if future.result():
+                                success += 1
+                        except Exception as exc:
+                            if not self.stop_event.is_set():
+                                self.log_queue.put(("error", str(exc)))
+                        completed += 1
+                        self.log_queue.put(("progress", completed))
+                        if self.stop_event.is_set():
+                            for pending in futures:
+                                pending.cancel()
         except Exception as exc:
             self.log_queue.put(("error", str(exc)))
         finally:
             stopped = self.stop_event.is_set()
             self.log_queue.put(("done", (success, len(videos), stopped)))
+
+    def _run_generation_job(
+        self,
+        index: int,
+        total: int,
+        video: Path,
+        preset: Path,
+        device: str,
+        analysis_fps: float | None,
+        max_width: int | None,
+        mode: str,
+    ) -> bool:
+        if self.stop_event.is_set():
+            return False
+        self.log_queue.put(("log", self.t("log_start", index=index, total=total, video=video)))
+        started = time.time()
+        result = run_generation_for_video(
+            video,
+            preset=preset,
+            device=device,
+            analysis_fps=analysis_fps,
+            max_width=max_width,
+            output_mode=mode,
+            log=lambda message: self.log_queue.put(("log", f"  [{index}/{total}] {message}")),
+            should_stop=self.stop_event.is_set,
+        )
+        elapsed = time.time() - started
+        self.log_queue.put(
+            (
+                "log",
+                self.t(
+                    "log_done",
+                    index=index,
+                    total=total,
+                    count=len(result.scripts),
+                    output=result.output_dir,
+                    elapsed=elapsed,
+                ),
+            )
+        )
+        return True
 
     def _drain_log_queue(self) -> None:
         try:

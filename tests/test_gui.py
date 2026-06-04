@@ -5,11 +5,13 @@ import tempfile
 import unittest
 
 from osrgen.gui import OUTPUT_SAME_DIR, OUTPUT_SAME_NAME_FOLDER
+from osrgen.gui import available_worker_options
 from osrgen.gui import build_predict_command, collect_generated_scripts, copy_scripts_to_video_directory
 from osrgen.gui import final_output_dir_for
 from osrgen.gui import format_device_options
 from osrgen.gui import format_speed_options, speed_overrides
 from osrgen.gui import normalize_video_paths, prediction_dir_for, scan_video_folder
+from osrgen.gui import parse_worker_count
 from osrgen.gui import should_clear_video_queue_after_run
 
 
@@ -118,6 +120,12 @@ class GuiHelperTests(unittest.TestCase):
         self.assertEqual(speed_overrides("quality"), (None, None))
         self.assertEqual(speed_overrides("balanced"), (6.0, 320))
         self.assertEqual(speed_overrides("fast"), (4.0, 256))
+
+    def test_worker_options_are_bounded(self) -> None:
+        self.assertEqual(available_worker_options(2), ("1", "2"))
+        self.assertEqual(available_worker_options(16), ("1", "2", "3", "4"))
+        self.assertEqual(parse_worker_count("3"), 3)
+        self.assertEqual(parse_worker_count("bad"), 1)
 
 
 if __name__ == "__main__":

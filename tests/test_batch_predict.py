@@ -97,6 +97,44 @@ class BatchPredictTests(unittest.TestCase):
             self.assertTrue((output / "batch_summary.csv").exists())
             self.assertTrue((output / "_qc" / "movie" / "index.html").exists())
 
+    def test_batch_predict_parallel_preserves_video_order(self) -> None:
+        def fake_predictor(config: ModelPredictAllConfig) -> list[Path]:
+            video = Path(config.input_path)
+            out_dir = Path(config.output) / video.stem
+            out_dir.mkdir(parents=True, exist_ok=True)
+            script = out_dir / f"{video.stem}.funscript"
+            script.write_text('{"actions":[]}', encoding="utf-8")
+            write_json(
+                out_dir / "prediction_all.json",
+                {
+                    "config": config.to_json(),
+                    "input_fingerprint": file_fingerprint(video),
+                    "quality_summary": {"axis_count": 1, "mean_score": 100.0, "review_axes": []},
+                    "quality_gate_summary": {"triggered_axes": []},
+                    "generated": [{"axis": "l0", "script_path": script.name, "quality_gate": {"action": "keep"}}],
+                },
+            )
+            return [script]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_dir = root / "videos"
+            output = root / "output"
+            input_dir.mkdir()
+            (input_dir / "b.mp4").write_bytes(b"fake")
+            (input_dir / "a.mp4").write_bytes(b"fake")
+            config = BatchPredictConfig(
+                input_dir=str(input_dir),
+                output=str(output),
+                predict=ModelPredictAllConfig(input_path="", checkpoint_dir="models", output=""),
+                workers=2,
+            )
+
+            results = run_batch_prediction(config, predictor=fake_predictor)
+
+            self.assertEqual([result.sample_id for result in results], ["a", "b"])
+            self.assertTrue(all(result.status == "ok" for result in results))
+
     def test_batch_predict_regenerates_when_config_or_video_changes(self) -> None:
         calls: list[ModelPredictAllConfig] = []
 

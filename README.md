@@ -31,6 +31,7 @@ uv sync --extra model
 - Write scripts next to each video, or create a same-name output folder next to each video.
 - Choose an available inference device by name, such as CPU or a detected NVIDIA GPU.
 - Choose speed/quality mode: Quality, Balanced, or Fast.
+- Choose parallel jobs for batch generation.
 - The queue is cleared after a fully successful run, so repeated clicks do not regenerate previous videos.
 - The GUI supports Simplified Chinese, English, and Japanese.
 
@@ -38,6 +39,7 @@ uv sync --extra model
 
 - OSRGen caches extracted video features locally and reuses them when the same video and analysis settings are generated again.
 - The default Quality mode keeps the packaged preset settings. Balanced and Fast reduce optical-flow input size for faster first-time generation.
+- Batch generation can process multiple videos at once. Use a modest worker count to avoid CPU/GPU oversubscription.
 - The PyTorch device speeds up the TCN model step. OpenCV video decoding and optical-flow extraction are still mostly CPU-bound.
 - Disable the local cache with `--no-feature-cache`, or set it with `--feature-cache-dir`.
 
@@ -59,6 +61,12 @@ Batch:
 
 ```powershell
 .\run_osrgen.bat model batch-predict --input-dir .\videos --preset .\configs\presets\region_hybrid_experience_95.json --recursive --output .\outputs\batch_predict
+```
+
+Batch with parallel jobs:
+
+```powershell
+.\run_osrgen.bat model batch-predict --input-dir .\videos --workers 2 --recursive --output .\outputs\batch_predict
 ```
 
 Preset validation:
@@ -105,6 +113,7 @@ uv sync --extra model
 - 输出方式可以选择直接生成在视频同目录，或在视频同目录创建同名文件夹。
 - 可按名称选择本机可用推理设备，例如 CPU 或检测到的 NVIDIA 显卡。
 - 可选择速度/质量档位：质量优先、均衡、快速。
+- 批量生成时可选择并行任务数。
 - 生成成功后，当前待生成列表会自动清空，避免重复生成同一批视频。
 - GUI 支持中文、English、日本語，可在右上角切换。
 
@@ -112,6 +121,7 @@ uv sync --extra model
 
 - OSRGen 会在本地缓存已抽取的视频特征；同一视频、同一分析设置再次生成时会复用缓存。
 - 默认“质量优先”保持打包 preset 设置。“均衡”和“快速”会降低光流输入规模，加快第一次生成。
+- 批量生成可以同时处理多个视频。建议使用适中的并行数，避免 CPU/GPU 过载。
 - 推理设备会加速 TCN 模型步骤；OpenCV 视频解码和光流特征提取仍主要受 CPU 影响。
 - 命令行可用 `--no-feature-cache` 关闭缓存，或用 `--feature-cache-dir` 指定缓存目录。
 
@@ -133,6 +143,12 @@ uv sync --extra model
 
 ```powershell
 .\run_osrgen.bat model batch-predict --input-dir .\videos --preset .\configs\presets\region_hybrid_experience_95.json --recursive --output .\outputs\batch_predict
+```
+
+并行批量生成：
+
+```powershell
+.\run_osrgen.bat model batch-predict --input-dir .\videos --workers 2 --recursive --output .\outputs\batch_predict
 ```
 
 检查模型和运行环境：
@@ -179,6 +195,7 @@ uv sync --extra model
 - スクリプトを動画と同じフォルダーに出力するか、動画と同名のフォルダーを作って出力できます。
 - CPU や検出された NVIDIA GPU など、利用可能な推論デバイスを名前で選択できます。
 - 速度/品質モードを選択できます: 品質、バランス、高速。
+- 一括生成では並列ジョブ数を選択できます。
 - 生成がすべて成功するとキューを自動でクリアします。
 - GUI は簡体字中国語、英語、日本語に対応しています。
 
@@ -186,6 +203,7 @@ uv sync --extra model
 
 - OSRGen は抽出済みの動画特徴をローカルにキャッシュし、同じ動画と解析設定で再生成すると再利用します。
 - 既定の品質モードは packaged preset を維持します。バランスと高速は光フロー入力サイズを下げ、初回生成を速くします。
+- 一括生成では複数の動画を同時に処理できます。CPU/GPU の過負荷を避けるため、控えめな worker 数を推奨します。
 - PyTorch デバイスは TCN モデル部分を高速化します。OpenCV の動画デコードと光フロー抽出は主に CPU で処理されます。
 - CLI では `--no-feature-cache` でキャッシュを無効化し、`--feature-cache-dir` で保存先を指定できます。
 
@@ -207,6 +225,12 @@ uv sync --extra model
 
 ```powershell
 .\run_osrgen.bat model batch-predict --input-dir .\videos --preset .\configs\presets\region_hybrid_experience_95.json --recursive --output .\outputs\batch_predict
+```
+
+並列一括生成：
+
+```powershell
+.\run_osrgen.bat model batch-predict --input-dir .\videos --workers 2 --recursive --output .\outputs\batch_predict
 ```
 
 preset 検証：

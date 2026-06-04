@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import html
 import json
@@ -21,6 +22,7 @@ class BatchPredictConfig:
     predict: ModelPredictAllConfig
     recursive: bool = False
     resume: bool = True
+    workers: int = 1
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)
@@ -59,69 +61,35 @@ def run_batch_prediction(
     videos = scan_batch_videos(input_root, recursive=config.recursive)
     output_root = Path(config.output)
     output_root.mkdir(parents=True, exist_ok=True)
-    results: list[BatchPredictResult] = []
-    for video in videos:
-        relative = video.relative_to(input_root)
-        sample_id = relative.with_suffix("").as_posix()
-        sample_output_root = output_root / relative.parent
-        prediction_dir = sample_output_root / video.stem
-        prediction_summary = prediction_dir / "prediction_all.json"
-        qc_output = output_root / "_qc" / relative.parent / video.stem
-        try:
-            prediction_config = replace(
-                config.predict,
-                input_path=str(video),
-                output=str(sample_output_root),
+    worker_count = normalized_worker_count(config.workers, len(videos))
+    if worker_count <= 1:
+        results = [
+            run_batch_prediction_for_video(
+                video,
+                input_root=input_root,
+                output_root=output_root,
+                config=config,
+                predictor=predictor,
             )
-            regeneration_warnings: list[str] = []
-            if config.resume and prediction_summary.exists():
-                reusable, regeneration_warnings = prediction_summary_matches_request(
-                    prediction_summary,
-                    prediction_config,
+            for video in videos
+        ]
+    else:
+        ordered: list[BatchPredictResult | None] = [None for _ in videos]
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(
+                    run_batch_prediction_for_video,
                     video,
-                )
-                if reusable:
-                    results.append(
-                        batch_result_from_prediction(
-                            sample_id=sample_id,
-                            video=video,
-                            prediction_dir=prediction_dir,
-                            prediction_summary=prediction_summary,
-                            qc_output=qc_output,
-                            status="skipped_existing",
-                            warnings=["existing prediction_all.json reused"],
-                        )
-                    )
-                    continue
-            predictor(prediction_config)
-            results.append(
-                batch_result_from_prediction(
-                    sample_id=sample_id,
-                    video=video,
-                    prediction_dir=prediction_dir,
-                    prediction_summary=prediction_summary,
-                    qc_output=qc_output,
-                    status="ok",
-                    warnings=regeneration_warnings,
-                )
-            )
-        except Exception as exc:
-            results.append(
-                BatchPredictResult(
-                    sample_id=sample_id,
-                    status="error",
-                    video=str(video),
-                    output_dir=str(prediction_dir),
-                    prediction_summary=None,
-                    qc_report=None,
-                    axis_count=0,
-                    mean_score=None,
-                    review_axes=[],
-                    gated_axes=[],
-                    omitted_axes=[],
-                    warnings=[str(exc)],
-                )
-            )
+                    input_root=input_root,
+                    output_root=output_root,
+                    config=config,
+                    predictor=predictor,
+                ): index
+                for index, video in enumerate(videos)
+            }
+            for future in as_completed(futures):
+                ordered[futures[future]] = future.result()
+        results = [result for result in ordered if result is not None]
 
     write_json(
         output_root / "batch_summary.json",
@@ -135,6 +103,76 @@ def run_batch_prediction(
     )
     write_batch_summary_csv(results, output_root / "batch_summary.csv")
     return results
+
+
+def normalized_worker_count(requested: int, item_count: int) -> int:
+    if item_count <= 1:
+        return 1
+    return max(1, min(int(requested), item_count))
+
+
+def run_batch_prediction_for_video(
+    video: Path,
+    *,
+    input_root: Path,
+    output_root: Path,
+    config: BatchPredictConfig,
+    predictor: Callable[[ModelPredictAllConfig], list[Path]],
+) -> BatchPredictResult:
+    relative = video.relative_to(input_root)
+    sample_id = relative.with_suffix("").as_posix()
+    sample_output_root = output_root / relative.parent
+    prediction_dir = sample_output_root / video.stem
+    prediction_summary = prediction_dir / "prediction_all.json"
+    qc_output = output_root / "_qc" / relative.parent / video.stem
+    try:
+        prediction_config = replace(
+            config.predict,
+            input_path=str(video),
+            output=str(sample_output_root),
+        )
+        regeneration_warnings: list[str] = []
+        if config.resume and prediction_summary.exists():
+            reusable, regeneration_warnings = prediction_summary_matches_request(
+                prediction_summary,
+                prediction_config,
+                video,
+            )
+            if reusable:
+                return batch_result_from_prediction(
+                    sample_id=sample_id,
+                    video=video,
+                    prediction_dir=prediction_dir,
+                    prediction_summary=prediction_summary,
+                    qc_output=qc_output,
+                    status="skipped_existing",
+                    warnings=["existing prediction_all.json reused"],
+                )
+        predictor(prediction_config)
+        return batch_result_from_prediction(
+            sample_id=sample_id,
+            video=video,
+            prediction_dir=prediction_dir,
+            prediction_summary=prediction_summary,
+            qc_output=qc_output,
+            status="ok",
+            warnings=regeneration_warnings,
+        )
+    except Exception as exc:
+        return BatchPredictResult(
+            sample_id=sample_id,
+            status="error",
+            video=str(video),
+            output_dir=str(prediction_dir),
+            prediction_summary=None,
+            qc_report=None,
+            axis_count=0,
+            mean_score=None,
+            review_axes=[],
+            gated_axes=[],
+            omitted_axes=[],
+            warnings=[str(exc)],
+        )
 
 
 def scan_batch_videos(input_root: Path, *, recursive: bool) -> list[Path]:
