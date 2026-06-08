@@ -53,6 +53,7 @@ LANGUAGE_PACKS = {
         "speed_balanced": "均衡（6fps / 320px）",
         "speed_fast": "快速（4fps / 256px）",
         "workers": "并行任务",
+        "move_video_to_output": "生成完成后把视频放进输出文件夹",
         "device_auto_cpu": "自动选择（当前可用：CPU）",
         "device_auto_gpu": "自动选择（推荐：{name}）",
         "device_cpu": "CPU（处理器）",
@@ -80,6 +81,8 @@ LANGUAGE_PACKS = {
         "log_device": "推理设备: {device}",
         "log_speed": "速度/质量: {speed}",
         "log_workers": "并行任务: {workers}",
+        "log_move_video_enabled": "生成成功后移动视频到输出文件夹",
+        "log_video_moved": "视频已移动: {path}",
         "log_output_mode": "输出模式: {mode}",
         "log_start": "[{index}/{total}] 开始: {video}",
         "log_done": "[{index}/{total}] 完成: {count} 个脚本 -> {output} ({elapsed:.1f}s)",
@@ -104,6 +107,7 @@ LANGUAGE_PACKS = {
         "speed_balanced": "Balanced (6fps / 320px)",
         "speed_fast": "Fast (4fps / 256px)",
         "workers": "Parallel jobs",
+        "move_video_to_output": "Move video into output folder after generation",
         "device_auto_cpu": "Auto (available: CPU)",
         "device_auto_gpu": "Auto (recommended: {name})",
         "device_cpu": "CPU (processor)",
@@ -131,6 +135,8 @@ LANGUAGE_PACKS = {
         "log_device": "Device: {device}",
         "log_speed": "Speed/quality: {speed}",
         "log_workers": "Parallel jobs: {workers}",
+        "log_move_video_enabled": "Move video into output folder after successful generation",
+        "log_video_moved": "Video moved: {path}",
         "log_output_mode": "Output mode: {mode}",
         "log_start": "[{index}/{total}] Start: {video}",
         "log_done": "[{index}/{total}] Done: {count} scripts -> {output} ({elapsed:.1f}s)",
@@ -155,6 +161,7 @@ LANGUAGE_PACKS = {
         "speed_balanced": "バランス（6fps / 320px）",
         "speed_fast": "高速（4fps / 256px）",
         "workers": "並列ジョブ",
+        "move_video_to_output": "生成後に動画を出力フォルダーへ移動",
         "device_auto_cpu": "自動選択（利用可能: CPU）",
         "device_auto_gpu": "自動選択（推奨: {name}）",
         "device_cpu": "CPU（プロセッサ）",
@@ -182,6 +189,8 @@ LANGUAGE_PACKS = {
         "log_device": "デバイス: {device}",
         "log_speed": "速度/品質: {speed}",
         "log_workers": "並列ジョブ: {workers}",
+        "log_move_video_enabled": "生成成功後に動画を出力フォルダーへ移動します",
+        "log_video_moved": "動画を移動しました: {path}",
         "log_output_mode": "出力モード: {mode}",
         "log_start": "[{index}/{total}] 開始: {video}",
         "log_done": "[{index}/{total}] 完了: {count} scripts -> {output} ({elapsed:.1f}s)",
@@ -315,6 +324,28 @@ def copy_scripts_to_video_directory(video: str | Path, prediction_dir: str | Pat
     return tuple(copied)
 
 
+def move_video_to_output_directory(video: str | Path, output_dir: str | Path) -> Path:
+    source = Path(video)
+    target_dir = Path(output_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if source.parent.resolve() == target_dir.resolve():
+        return source
+    target = next_available_path(target_dir / source.name)
+    shutil.move(str(source), str(target))
+    return target
+
+
+def next_available_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    if not candidate.exists():
+        return candidate
+    for index in range(1, 10_000):
+        numbered = candidate.with_name(f"{candidate.stem} ({index}){candidate.suffix}")
+        if not numbered.exists():
+            return numbered
+    raise RuntimeError(f"Could not find an available file name for: {candidate}")
+
+
 def python_executable() -> str:
     return os.environ.get("OSRGEN_PYTHON_EXE") or sys.executable
 
@@ -397,6 +428,7 @@ def run_generation_for_video(
     output_mode: str,
     log: Callable[[str], None],
     should_stop: Callable[[], bool],
+    move_video: bool = False,
 ) -> GuiGenerationResult:
     root = project_root()
     if output_mode == OUTPUT_SAME_NAME_FOLDER:
@@ -414,7 +446,8 @@ def run_generation_for_video(
             should_stop=should_stop,
             cwd=root,
         )
-        return GuiGenerationResult(video=video, output_dir=prediction_dir, scripts=scripts)
+        final_video = move_video_to_output_directory(video, prediction_dir) if move_video else video
+        return GuiGenerationResult(video=final_video, output_dir=prediction_dir, scripts=scripts)
 
     with tempfile.TemporaryDirectory(prefix="osrgen_gui_") as tmp:
         output_root = Path(tmp)
@@ -432,7 +465,8 @@ def run_generation_for_video(
             cwd=root,
         )
         scripts = copy_scripts_to_video_directory(video, prediction_dir)
-        return GuiGenerationResult(video=video, output_dir=video.parent, scripts=scripts)
+        final_video = move_video_to_output_directory(video, video.parent) if move_video else video
+        return GuiGenerationResult(video=final_video, output_dir=video.parent, scripts=scripts)
 
 
 def run_predict_subprocess(
@@ -471,18 +505,32 @@ def run_predict_subprocess(
         creationflags=creationflags,
     )
     assert process.stdout is not None
+    output_queue: queue.Queue[object] = queue.Queue()
+    output_done = object()
+
+    def read_output() -> None:
+        assert process.stdout is not None
+        try:
+            for stdout_line in process.stdout:
+                output_queue.put(stdout_line.rstrip())
+        finally:
+            output_queue.put(output_done)
+
+    threading.Thread(target=read_output, daemon=True).start()
+    stdout_finished = False
     while True:
-        line = process.stdout.readline()
-        if line:
-            log(line.rstrip())
         if should_stop():
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
+            terminate_process(process)
             raise RuntimeError("Generation stopped by user.")
-        if line == "" and process.poll() is not None:
+        try:
+            item = output_queue.get(timeout=0.1)
+        except queue.Empty:
+            item = None
+        if item is output_done:
+            stdout_finished = True
+        elif isinstance(item, str) and item:
+            log(item)
+        if process.poll() is not None and stdout_finished:
             break
     exit_code = process.wait()
     if exit_code != 0:
@@ -491,6 +539,17 @@ def run_predict_subprocess(
     if not scripts:
         raise RuntimeError(f"生成完成但没有找到 funscript: {prediction_dir}")
     return scripts
+
+
+def terminate_process(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=3)
 
 
 class OsrGeneratorGui:
@@ -529,6 +588,7 @@ class OsrGeneratorGui:
         self.speed_label = tk.StringVar(value="")
         self.speed_label_to_value: dict[str, str] = {}
         self.parallel_workers = tk.StringVar(value=str(DEFAULT_WORKERS))
+        self.move_video_to_output = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value=self.t("status_select_videos"))
         self.progress_text = tk.StringVar(value="0 / 0")
         self.output_mode.trace_add("write", lambda *_args: self._refresh_table())
@@ -621,6 +681,11 @@ class OsrGeneratorGui:
             width=8,
         )
         workers_combo.grid(row=4, column=1, sticky="w", pady=(8, 0), padx=(8, 8))
+
+        self._track(ttk.Checkbutton(
+            options,
+            variable=self.move_video_to_output,
+        ), "move_video_to_output").grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         center = ttk.Frame(self.root, padding=(12, 0, 12, 6))
         center.grid(row=2, column=0, sticky="nsew")
@@ -746,16 +811,19 @@ class OsrGeneratorGui:
         device = self.device.get()
         analysis_fps, max_width = speed_overrides(self.speed_profile.get())
         workers = min(parse_worker_count(self.parallel_workers.get()), len(self.videos))
+        move_video = bool(self.move_video_to_output.get())
         device_label = self.device_label.get() or device
         self._append_log(self.t("log_device", device=device_label))
         self._append_log(self.t("log_speed", speed=self.speed_label.get() or self.speed_profile.get()))
         self._append_log(self.t("log_workers", workers=workers))
+        if move_video:
+            self._append_log(self.t("log_move_video_enabled"))
         self._append_log(self.t("log_output_mode", mode=self.output_mode.get()))
         videos = list(self.videos)
         mode = self.output_mode.get()
         self.worker = threading.Thread(
             target=self._generation_worker,
-            args=(videos, preset, device, analysis_fps, max_width, mode, workers),
+            args=(videos, preset, device, analysis_fps, max_width, mode, workers, move_video),
             daemon=True,
         )
         self.worker.start()
@@ -773,6 +841,7 @@ class OsrGeneratorGui:
         max_width: int | None,
         mode: str,
         workers: int,
+        move_video: bool,
     ) -> None:
         success = 0
         completed = 0
@@ -782,7 +851,17 @@ class OsrGeneratorGui:
                 for index, video in enumerate(videos, start=1):
                     if self.stop_event.is_set():
                         break
-                    if self._run_generation_job(index, len(videos), video, preset, device, analysis_fps, max_width, mode):
+                    if self._run_generation_job(
+                        index,
+                        len(videos),
+                        video,
+                        preset,
+                        device,
+                        analysis_fps,
+                        max_width,
+                        mode,
+                        move_video,
+                    ):
                         success += 1
                     completed += 1
                     self.log_queue.put(("progress", completed))
@@ -799,6 +878,7 @@ class OsrGeneratorGui:
                             analysis_fps,
                             max_width,
                             mode,
+                            move_video,
                         )
                         for index, video in enumerate(videos, start=1)
                     ]
@@ -815,7 +895,8 @@ class OsrGeneratorGui:
                             for pending in futures:
                                 pending.cancel()
         except Exception as exc:
-            self.log_queue.put(("error", str(exc)))
+            if not self.stop_event.is_set():
+                self.log_queue.put(("error", str(exc)))
         finally:
             stopped = self.stop_event.is_set()
             self.log_queue.put(("done", (success, len(videos), stopped)))
@@ -830,6 +911,7 @@ class OsrGeneratorGui:
         analysis_fps: float | None,
         max_width: int | None,
         mode: str,
+        move_video: bool,
     ) -> bool:
         if self.stop_event.is_set():
             return False
@@ -844,7 +926,10 @@ class OsrGeneratorGui:
             output_mode=mode,
             log=lambda message: self.log_queue.put(("log", f"  [{index}/{total}] {message}")),
             should_stop=self.stop_event.is_set,
+            move_video=move_video,
         )
+        if result.video != video:
+            self.log_queue.put(("log", self.t("log_video_moved", path=result.video)))
         elapsed = time.time() - started
         self.log_queue.put(
             (

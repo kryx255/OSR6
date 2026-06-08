@@ -32,6 +32,7 @@ uv sync --extra model
 - Choose an available inference device by name, such as CPU or a detected NVIDIA GPU.
 - Choose speed/quality mode: Quality, Balanced, or Fast.
 - Choose parallel jobs for batch generation.
+- Optionally move each video into its output folder after successful generation.
 - The queue is cleared after a fully successful run, so repeated clicks do not regenerate previous videos.
 - The GUI supports Simplified Chinese, English, and Japanese.
 
@@ -114,6 +115,7 @@ uv sync --extra model
 - 可按名称选择本机可用推理设备，例如 CPU 或检测到的 NVIDIA 显卡。
 - 可选择速度/质量档位：质量优先、均衡、快速。
 - 批量生成时可选择并行任务数。
+- 可选择生成成功后把视频移动到对应输出文件夹。
 - 生成成功后，当前待生成列表会自动清空，避免重复生成同一批视频。
 - GUI 支持中文、English、日本語，可在右上角切换。
 
@@ -196,6 +198,7 @@ uv sync --extra model
 - CPU や検出された NVIDIA GPU など、利用可能な推論デバイスを名前で選択できます。
 - 速度/品質モードを選択できます: 品質、バランス、高速。
 - 一括生成では並列ジョブ数を選択できます。
+- 生成成功後に動画を対応する出力フォルダーへ移動できます。
 - 生成がすべて成功するとキューを自動でクリアします。
 - GUI は簡体字中国語、英語、日本語に対応しています。
 

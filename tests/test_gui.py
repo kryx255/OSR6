@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import tempfile
+import time
 import unittest
+from unittest.mock import patch
 
 from osrgen.gui import OUTPUT_SAME_DIR, OUTPUT_SAME_NAME_FOLDER
 from osrgen.gui import available_worker_options
@@ -10,8 +13,10 @@ from osrgen.gui import build_predict_command, collect_generated_scripts, copy_sc
 from osrgen.gui import final_output_dir_for
 from osrgen.gui import format_device_options
 from osrgen.gui import format_speed_options, speed_overrides
+from osrgen.gui import move_video_to_output_directory
 from osrgen.gui import normalize_video_paths, prediction_dir_for, scan_video_folder
 from osrgen.gui import parse_worker_count
+from osrgen.gui import run_predict_subprocess
 from osrgen.gui import should_clear_video_queue_after_run
 
 
@@ -65,6 +70,33 @@ class GuiHelperTests(unittest.TestCase):
             self.assertEqual([path.name for path in copied], ["clip.funscript", "clip.surge.funscript"])
             self.assertTrue((root / "clip.funscript").is_file())
             self.assertTrue((root / "clip.surge.funscript").is_file())
+
+    def test_move_video_to_output_directory_preserves_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "clip"
+            output.mkdir()
+            video = root / "clip.mp4"
+            video.write_bytes(b"source")
+            (output / "clip.mp4").write_bytes(b"existing")
+
+            moved = move_video_to_output_directory(video, output)
+
+            self.assertEqual(moved.name, "clip (1).mp4")
+            self.assertFalse(video.exists())
+            self.assertEqual(moved.read_bytes(), b"source")
+            self.assertEqual((output / "clip.mp4").read_bytes(), b"existing")
+
+    def test_move_video_to_output_directory_noops_when_already_in_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = root / "clip.mp4"
+            video.write_bytes(b"source")
+
+            moved = move_video_to_output_directory(video, root)
+
+            self.assertEqual(moved, video)
+            self.assertTrue(video.exists())
 
     def test_collect_generated_scripts_sorts_scripts_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,6 +158,27 @@ class GuiHelperTests(unittest.TestCase):
         self.assertEqual(available_worker_options(16), ("1", "2", "3", "4"))
         self.assertEqual(parse_worker_count("3"), 3)
         self.assertEqual(parse_worker_count("bad"), 1)
+
+    def test_stop_terminates_subprocess_without_waiting_for_output(self) -> None:
+        command = [sys.executable, "-c", "import time; time.sleep(30)"]
+        started = time.perf_counter()
+
+        with patch("osrgen.gui.build_predict_command", return_value=command):
+            with self.assertRaises(RuntimeError):
+                run_predict_subprocess(
+                    Path("C:/videos/demo.mp4"),
+                    preset=Path("preset.json"),
+                    device="cpu",
+                    analysis_fps=None,
+                    max_width=None,
+                    output_root=Path("C:/out"),
+                    prediction_dir=Path("C:/out/demo"),
+                    log=lambda _message: None,
+                    should_stop=lambda: True,
+                    cwd=Path.cwd(),
+                )
+
+        self.assertLess(time.perf_counter() - started, 3.0)
 
 
 if __name__ == "__main__":
