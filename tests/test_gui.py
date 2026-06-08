@@ -14,6 +14,7 @@ from osrgen.gui import final_output_dir_for
 from osrgen.gui import format_device_options
 from osrgen.gui import format_speed_options, speed_overrides
 from osrgen.gui import move_video_to_output_directory
+from osrgen.gui import move_video_to_same_name_folder
 from osrgen.gui import normalize_video_paths, prediction_dir_for, scan_video_folder
 from osrgen.gui import parse_worker_count
 from osrgen.gui import run_predict_subprocess
@@ -96,6 +97,46 @@ class GuiHelperTests(unittest.TestCase):
             moved = move_video_to_output_directory(video, root)
 
             self.assertEqual(moved, video)
+            self.assertTrue(video.exists())
+
+    def test_move_video_to_same_name_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = root / "clip.mp4"
+            video.write_bytes(b"source")
+
+            moved = move_video_to_same_name_folder(video)
+
+            self.assertEqual(moved, root / "clip" / "clip.mp4")
+            self.assertFalse(video.exists())
+            self.assertEqual(moved.read_bytes(), b"source")
+
+    def test_move_video_to_same_name_folder_preserves_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_dir = root / "clip"
+            target_dir.mkdir()
+            video = root / "clip.mp4"
+            video.write_bytes(b"source")
+            (target_dir / "clip.mp4").write_bytes(b"existing")
+
+            moved = move_video_to_same_name_folder(video)
+
+            self.assertEqual(moved, target_dir / "clip (1).mp4")
+            self.assertFalse(video.exists())
+            self.assertEqual(moved.read_bytes(), b"source")
+            self.assertEqual((target_dir / "clip.mp4").read_bytes(), b"existing")
+
+    def test_move_video_to_same_name_folder_noops_when_already_organized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "clip"
+            folder.mkdir()
+            video = folder / "clip.mp4"
+            video.write_bytes(b"source")
+
+            moved = move_video_to_same_name_folder(video)
+
+            self.assertEqual(moved, video.resolve())
             self.assertTrue(video.exists())
 
     def test_collect_generated_scripts_sorts_scripts_only(self) -> None:

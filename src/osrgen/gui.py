@@ -39,6 +39,7 @@ LANGUAGE_PACKS = {
         "title": "OSR6 脚本生成器",
         "language": "语言",
         "add_videos": "添加视频",
+        "add_organized_videos": "添加并整理",
         "add_folder": "添加文件夹",
         "recursive": "递归",
         "remove_selected": "移除选中",
@@ -68,7 +69,10 @@ LANGUAGE_PACKS = {
         "choose_preset": "选择 preset JSON",
         "status_select_videos": "请选择视频。",
         "status_added": "已添加 {count} 个视频，共 {total} 个。",
+        "status_organized": "已整理并添加 {count} 个视频，共 {total} 个。",
         "status_cleared": "列表已清空。",
+        "organize_failed_title": "整理失败",
+        "organize_failed_message": "整理视频时出错:\n{message}",
         "no_videos_title": "没有视频",
         "no_videos_message": "请先添加一个或多个视频。",
         "preset_missing_title": "Preset 不存在",
@@ -93,6 +97,7 @@ LANGUAGE_PACKS = {
         "title": "OSR6 Script Generator",
         "language": "Language",
         "add_videos": "Add Videos",
+        "add_organized_videos": "Add & Organize",
         "add_folder": "Add Folder",
         "recursive": "Recursive",
         "remove_selected": "Remove Selected",
@@ -122,7 +127,10 @@ LANGUAGE_PACKS = {
         "choose_preset": "Choose preset JSON",
         "status_select_videos": "Choose videos.",
         "status_added": "Added {count} videos, {total} total.",
+        "status_organized": "Organized and added {count} videos, {total} total.",
         "status_cleared": "Queue cleared.",
+        "organize_failed_title": "Organize failed",
+        "organize_failed_message": "Could not organize videos:\n{message}",
         "no_videos_title": "No videos",
         "no_videos_message": "Add one or more videos first.",
         "preset_missing_title": "Preset not found",
@@ -147,6 +155,7 @@ LANGUAGE_PACKS = {
         "title": "OSR6 スクリプト生成",
         "language": "言語",
         "add_videos": "動画を追加",
+        "add_organized_videos": "追加して整理",
         "add_folder": "フォルダーを追加",
         "recursive": "再帰",
         "remove_selected": "選択を削除",
@@ -176,7 +185,10 @@ LANGUAGE_PACKS = {
         "choose_preset": "preset JSON を選択",
         "status_select_videos": "動画を選択してください。",
         "status_added": "{count} 件追加、合計 {total} 件。",
+        "status_organized": "{count} 件を整理して追加、合計 {total} 件。",
         "status_cleared": "リストをクリアしました。",
+        "organize_failed_title": "整理に失敗しました",
+        "organize_failed_message": "動画の整理中にエラーが発生しました:\n{message}",
         "no_videos_title": "動画がありません",
         "no_videos_message": "先に動画を追加してください。",
         "preset_missing_title": "Preset が見つかりません",
@@ -330,6 +342,17 @@ def move_video_to_output_directory(video: str | Path, output_dir: str | Path) ->
     target_dir.mkdir(parents=True, exist_ok=True)
     if source.parent.resolve() == target_dir.resolve():
         return source
+    target = next_available_path(target_dir / source.name)
+    shutil.move(str(source), str(target))
+    return target
+
+
+def move_video_to_same_name_folder(video: str | Path) -> Path:
+    source = Path(video).expanduser().resolve()
+    if source.parent.name.lower() == source.stem.lower():
+        return source
+    target_dir = source.parent / source.stem
+    target_dir.mkdir(parents=True, exist_ok=True)
     target = next_available_path(target_dir / source.name)
     shutil.move(str(source), str(target))
     return target
@@ -607,15 +630,20 @@ class OsrGeneratorGui:
 
         top = ttk.Frame(self.root, padding=(12, 12, 12, 6))
         top.grid(row=0, column=0, sticky="ew")
-        top.columnconfigure(5, weight=1)
+        top.columnconfigure(6, weight=1)
 
         self._track(ttk.Button(top, command=self.add_videos), "add_videos").grid(row=0, column=0, padx=(0, 8))
-        self._track(ttk.Button(top, command=self.add_folder), "add_folder").grid(row=0, column=1, padx=(0, 8))
-        self._track(ttk.Checkbutton(top, variable=self.recursive_folder), "recursive").grid(row=0, column=2, padx=(0, 14))
-        self._track(ttk.Button(top, command=self.remove_selected), "remove_selected").grid(row=0, column=3, padx=(0, 8))
-        self._track(ttk.Button(top, command=self.clear_videos), "clear").grid(row=0, column=4, sticky="w")
+        self._track(ttk.Button(top, command=self.add_organized_videos), "add_organized_videos").grid(
+            row=0,
+            column=1,
+            padx=(0, 8),
+        )
+        self._track(ttk.Button(top, command=self.add_folder), "add_folder").grid(row=0, column=2, padx=(0, 8))
+        self._track(ttk.Checkbutton(top, variable=self.recursive_folder), "recursive").grid(row=0, column=3, padx=(0, 14))
+        self._track(ttk.Button(top, command=self.remove_selected), "remove_selected").grid(row=0, column=4, padx=(0, 8))
+        self._track(ttk.Button(top, command=self.clear_videos), "clear").grid(row=0, column=5, sticky="w")
         language_frame = ttk.Frame(top)
-        language_frame.grid(row=0, column=5, sticky="e")
+        language_frame.grid(row=0, column=6, sticky="e")
         self._track(ttk.Label(language_frame), "language").grid(row=0, column=0, padx=(0, 6))
         language_combo = ttk.Combobox(
             language_frame,
@@ -729,6 +757,28 @@ class OsrGeneratorGui:
         )
         self._add_paths(paths)
 
+    def add_organized_videos(self) -> None:
+        paths = self.filedialog.askopenfilenames(
+            title=self.t("choose_videos"),
+            filetypes=[
+                ("Video files", "*.mp4 *.mkv *.webm *.avi *.mov *.m4v"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not paths:
+            return
+        try:
+            organized = [move_video_to_same_name_folder(path) for path in normalize_video_paths(paths)]
+        except Exception as exc:
+            self.messagebox.showerror(
+                self.t("organize_failed_title"),
+                self.t("organize_failed_message", message=exc),
+            )
+            return
+        added = self._add_paths(organized)
+        if added:
+            self.status_text.set(self.t("status_organized", count=added, total=len(self.videos)))
+
     def add_folder(self) -> None:
         folder = self.filedialog.askdirectory(title=self.t("choose_folder"))
         if not folder:
@@ -744,7 +794,7 @@ class OsrGeneratorGui:
         if path:
             self.preset_path.set(path)
 
-    def _add_paths(self, paths: Iterable[str | Path]) -> None:
+    def _add_paths(self, paths: Iterable[str | Path]) -> int:
         existing = {str(path).lower() for path in self.videos}
         added = 0
         for path in normalize_video_paths(paths):
@@ -757,6 +807,7 @@ class OsrGeneratorGui:
         if added:
             self._refresh_table()
             self.status_text.set(self.t("status_added", count=added, total=len(self.videos)))
+        return added
 
     def remove_selected(self) -> None:
         selected = set(self.video_table.selection())

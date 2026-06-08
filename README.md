@@ -27,6 +27,7 @@ uv sync --extra model
 ### GUI
 
 - Add one or many videos.
+- Add and organize selected videos into same-name folders next to the original files.
 - Add a folder of videos, optionally recursive.
 - Write scripts next to each video, or create a same-name output folder next to each video.
 - Choose an available inference device by name, such as CPU or a detected NVIDIA GPU.
@@ -110,6 +111,7 @@ uv sync --extra model
 ### GUI 使用
 
 - `添加视频`：选择一个或多个视频。
+- `添加并整理`：选择视频后，按文件名移动到同目录的同名文件夹，并加入列表。
 - `添加文件夹`：批量加入文件夹里的视频，可勾选递归。
 - 输出方式可以选择直接生成在视频同目录，或在视频同目录创建同名文件夹。
 - 可按名称选择本机可用推理设备，例如 CPU 或检测到的 NVIDIA 显卡。
@@ -193,6 +195,7 @@ uv sync --extra model
 ### GUI
 
 - 1つまたは複数の動画を追加できます。
+- 選択した動画を元フォルダー内の同名フォルダーへ整理して追加できます。
 - フォルダー内の動画を一括追加できます。
 - スクリプトを動画と同じフォルダーに出力するか、動画と同名のフォルダーを作って出力できます。
 - CPU や検出された NVIDIA GPU など、利用可能な推論デバイスを名前で選択できます。
