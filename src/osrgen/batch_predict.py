@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from .modeling import ModelPredictAllConfig, predict_all_models
-from .project import file_fingerprint, write_json
+from .project import file_fingerprint, safe_path_name, write_json
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v"}
@@ -122,9 +122,9 @@ def run_batch_prediction_for_video(
     relative = video.relative_to(input_root)
     sample_id = relative.with_suffix("").as_posix()
     sample_output_root = output_root / relative.parent
-    prediction_dir = sample_output_root / video.stem
+    prediction_dir = sample_output_root / safe_path_name(video.stem)
     prediction_summary = prediction_dir / "prediction_all.json"
-    qc_output = output_root / "_qc" / relative.parent / video.stem
+    qc_output = output_root / "_qc" / relative.parent / safe_path_name(video.stem)
     try:
         prediction_config = replace(
             config.predict,

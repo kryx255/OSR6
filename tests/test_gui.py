@@ -19,6 +19,7 @@ from osrgen.gui import normalize_video_paths, prediction_dir_for, scan_video_fol
 from osrgen.gui import parse_worker_count
 from osrgen.gui import run_predict_subprocess
 from osrgen.gui import should_clear_video_queue_after_run
+from osrgen.project import safe_path_name
 
 
 class GuiHelperTests(unittest.TestCase):
@@ -54,6 +55,13 @@ class GuiHelperTests(unittest.TestCase):
 
     def test_prediction_dir_uses_video_stem(self) -> None:
         self.assertEqual(prediction_dir_for("C:/videos/demo.mp4", "C:/out"), Path("C:/out/demo"))
+
+    def test_prediction_dir_uses_windows_safe_video_stem(self) -> None:
+        video = Path("C:/videos/demo....mp4")
+
+        self.assertEqual(safe_path_name(video.stem), "demo___")
+        self.assertEqual(prediction_dir_for(video, "C:/out"), Path("C:/out/demo___"))
+        self.assertEqual(final_output_dir_for(video, OUTPUT_SAME_NAME_FOLDER), Path("C:/videos/demo___"))
 
     def test_copy_scripts_to_video_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,6 +116,18 @@ class GuiHelperTests(unittest.TestCase):
             moved = move_video_to_same_name_folder(video)
 
             self.assertEqual(moved, root / "clip" / "clip.mp4")
+            self.assertFalse(video.exists())
+            self.assertEqual(moved.read_bytes(), b"source")
+
+    def test_move_video_to_same_name_folder_uses_windows_safe_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = root / "clip....mp4"
+            video.write_bytes(b"source")
+
+            moved = move_video_to_same_name_folder(video)
+
+            self.assertEqual(moved, root / "clip___" / "clip....mp4")
             self.assertFalse(video.exists())
             self.assertEqual(moved.read_bytes(), b"source")
 

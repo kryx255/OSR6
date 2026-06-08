@@ -15,6 +15,7 @@ import time
 from typing import Callable, Iterable
 
 from .batch_predict import VIDEO_EXTENSIONS
+from .project import safe_path_name
 
 
 DEFAULT_PRESET = Path("configs/presets/region_hybrid_experience_95.json")
@@ -304,13 +305,13 @@ def scan_video_folder(folder: str | Path, *, recursive: bool = True) -> list[Pat
 
 
 def prediction_dir_for(video: str | Path, output_root: str | Path) -> Path:
-    return Path(output_root) / Path(video).stem
+    return Path(output_root) / safe_path_name(Path(video).stem)
 
 
 def final_output_dir_for(video: str | Path, output_mode: str) -> Path:
     src = Path(video)
     if output_mode == OUTPUT_SAME_NAME_FOLDER:
-        return src.parent / src.stem
+        return src.parent / safe_path_name(src.stem)
     if output_mode == OUTPUT_SAME_DIR:
         return src.parent
     raise ValueError(f"Unsupported output mode: {output_mode}")
@@ -349,9 +350,10 @@ def move_video_to_output_directory(video: str | Path, output_dir: str | Path) ->
 
 def move_video_to_same_name_folder(video: str | Path) -> Path:
     source = Path(video).expanduser().resolve()
-    if source.parent.name.lower() == source.stem.lower():
+    folder_name = safe_path_name(source.stem)
+    if source.parent.name.lower() == folder_name.lower():
         return source
-    target_dir = source.parent / source.stem
+    target_dir = source.parent / folder_name
     target_dir.mkdir(parents=True, exist_ok=True)
     target = next_available_path(target_dir / source.name)
     shutil.move(str(source), str(target))

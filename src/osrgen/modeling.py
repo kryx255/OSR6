@@ -16,7 +16,7 @@ from .funscript import Funscript
 from .generator import estimate_fps, moving_average, ms_to_samples, positions_to_funscript
 from .profiles import load_axis_scale_profile_data, load_postprocess_profile, normalize_postprocess_detail
 from .profiles import optional_profile_float
-from .project import file_fingerprint, write_json
+from .project import file_fingerprint, safe_path_name, write_json
 from .quality import prediction_duration_seconds, prediction_quality_for_axis, quality_gate_detail
 from .quality import summarize_prediction_quality, summarize_quality_gates, validate_quality_gate
 from .regions import DEFAULT_REGIONS, DEFAULT_REGION_FEATURE_SIGNALS
@@ -98,7 +98,7 @@ def predict_all_models(config: ModelPredictAllConfig) -> list[Path]:
     input_path = Path(config.input_path)
     output_root = Path(config.output)
     output_name = input_path.parent.name if input_path.name.lower() == "features.csv" else input_path.stem
-    out_dir = output_root / output_name
+    out_dir = output_root / safe_path_name(output_name)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     runtime_config = config_with_inferred_region_request(config, all_columns)
